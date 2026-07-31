@@ -30,6 +30,8 @@ import {
   canClaimRequiredRole,
   canManageTaskProgress,
   canReviewTask,
+  getManagerRoleIds,
+  getReviewerRoleIds,
   isAdminOverride,
 } from './task.policy.js';
 import { buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
@@ -53,6 +55,12 @@ function isTextChannel(channel: unknown): channel is TextChannel {
     channel !== null &&
     (channel as { type?: number }).type === ChannelType.GuildText
   );
+}
+
+function formatRoleMentions(roleIds: readonly string[], fallback: string): string {
+  return roleIds.length > 0
+    ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
+    : fallback;
 }
 
 async function sendInteractionMessage(
@@ -288,12 +296,14 @@ async function handleClaimTaskInteraction(
     member: interaction.member,
     memberPermissions: interaction.memberPermissions,
     adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
   });
   const allowedToClaim = canClaimRequiredRole({
     requiredRole: task.requiredRole,
     member: interaction.member,
     memberPermissions: interaction.memberPermissions,
     adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
   });
 
   if (!allowedToClaim) {
@@ -431,12 +441,14 @@ async function handleJoinTaskInteraction(
     member: interaction.member,
     memberPermissions: interaction.memberPermissions,
     adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
   });
   const allowedToJoin = canClaimRequiredRole({
     requiredRole: task.requiredRole,
     member: interaction.member,
     memberPermissions: interaction.memberPermissions,
     adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
   });
 
   if (!allowedToJoin) {
@@ -547,11 +559,12 @@ async function handleBlockTaskSubmit(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       task,
       userId: interaction.user.id,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or task team member can block this task.',
+      content: 'Only a configured manager role or task team member can block this task.'
     });
     return;
   }
@@ -625,11 +638,12 @@ async function handleUnblockTaskInteraction(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       task,
       userId: interaction.user.id,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or task team member can unblock this task.',
+      content: 'Only a configured manager role or task team member can unblock this task.'
     });
     return;
   }
@@ -698,11 +712,12 @@ async function handleRequestReviewInteraction(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       task,
       userId: interaction.user.id,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or task team member can request review for this task.',
+      content: 'Only a configured manager role or task team member can request review for this task.'
     });
     return;
   }
@@ -739,9 +754,10 @@ async function handleRequestReviewInteraction(
     task: updatedTask,
   });
 
-  const reviewerLine = guildConfig.reviewerRoleId
-    ? ` Reviewers: <@&${guildConfig.reviewerRoleId}>`
-    : ' Admin and Technician can review this task.';
+  const reviewerLine = ` Reviewers: ${formatRoleMentions(
+    getReviewerRoleIds(guildConfig),
+    formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
+  )}`;
 
   await interaction.editReply({
     content: `Moved **${updatedTask.taskCode}** to Review.${reviewerLine}`,
@@ -772,10 +788,12 @@ async function handleApproveTaskInteraction(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       reviewerRoleId: guildConfig.reviewerRoleId,
+      secondaryReviewerRoleId: guildConfig.secondaryReviewerRoleId,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or configured reviewer can approve this task.',
+      content: 'Only configured manager or reviewer roles can approve this task.'
     });
     return;
   }
@@ -844,10 +862,12 @@ async function handleReturnTaskInteraction(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       reviewerRoleId: guildConfig.reviewerRoleId,
+      secondaryReviewerRoleId: guildConfig.secondaryReviewerRoleId,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or configured reviewer can return this task for changes.',
+      content: 'Only configured manager or reviewer roles can return this task for changes.'
     });
     return;
   }
@@ -916,10 +936,12 @@ async function handleReopenTaskInteraction(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
       reviewerRoleId: guildConfig.reviewerRoleId,
+      secondaryReviewerRoleId: guildConfig.secondaryReviewerRoleId,
     })) {
     await interaction.editReply({
-      content: 'Only an Admin, Technician, or configured reviewer can reopen this task.',
+      content: 'Only configured manager or reviewer roles can reopen this task.'
     });
     return;
   }

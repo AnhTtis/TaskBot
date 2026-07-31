@@ -9,6 +9,10 @@ import {
 import type { GuildConfig } from '@prisma/client';
 
 import { logger } from '../../lib/logger.js';
+import {
+  getManagerRoleIds,
+  getReviewerRoleIds,
+} from '../tasks/task.policy.js';
 import { listTasksForDashboardSummary } from '../tasks/task.repository.js';
 import { buildDashboardSummaryEmbed } from '../tasks/task.renderer.js';
 import {
@@ -22,6 +26,12 @@ function isGuildTextChannel(channel: unknown): channel is TextChannel {
     channel !== null &&
     (channel as { type?: number }).type === ChannelType.GuildText
   );
+}
+
+function formatConfiguredRoleMentions(roleIds: readonly string[], fallback: string): string {
+  return roleIds.length > 0
+    ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
+    : fallback;
 }
 
 export async function refreshDashboardSummary(options: {
@@ -54,8 +64,8 @@ export async function refreshDashboardSummary(options: {
   const embed = buildDashboardSummaryEmbed({
     guildName: options.guildName,
     refreshedByUserId: options.refreshedByUserId,
-    adminRoleId: guildConfig.adminRoleId,
-    reviewerRoleId: guildConfig.reviewerRoleId,
+    managerRoleIds: getManagerRoleIds(guildConfig),
+    reviewerRoleIds: getReviewerRoleIds(guildConfig),
     feedChannelId: guildConfig.feedChannelId,
     archiveChannelId: guildConfig.archiveChannelId,
     maxActiveTasksPerUser: guildConfig.maxActiveTasksPerUser,
@@ -99,7 +109,9 @@ export async function handleSetupCommand(
   const feedChannel = interaction.options.getChannel('feed_channel', true);
   const archiveChannel = interaction.options.getChannel('archive_channel', false);
   const adminRole = interaction.options.getRole('admin_role', true);
+  const secondaryManagerRole = interaction.options.getRole('secondary_manager_role', false);
   const reviewerRole = interaction.options.getRole('reviewer_role', false);
+  const secondaryReviewerRole = interaction.options.getRole('secondary_reviewer_role', false);
   const maxActiveTasks = interaction.options.getInteger('max_active_tasks', false) ?? 2;
   const defaultThreadAutoArchiveMinutes =
     interaction.options.getInteger('thread_auto_archive_minutes', false) ?? 1440;
@@ -124,11 +136,19 @@ export async function handleSetupCommand(
 
   const tasks = await listTasksForDashboardSummary(interaction.guildId);
   const existingConfig = await findGuildConfigByGuildId(interaction.guildId);
+  const managerRoleIds = getManagerRoleIds({
+    adminRoleId: adminRole.id,
+    secondaryManagerRoleId: secondaryManagerRole?.id ?? null,
+  });
+  const reviewerRoleIds = getReviewerRoleIds({
+    reviewerRoleId: reviewerRole?.id ?? null,
+    secondaryReviewerRoleId: secondaryReviewerRole?.id ?? null,
+  });
   const embed = buildDashboardSummaryEmbed({
     guildName: guild.name,
     refreshedByUserId: interaction.user.id,
-    adminRoleId: adminRole.id,
-    reviewerRoleId: reviewerRole?.id ?? null,
+    managerRoleIds,
+    reviewerRoleIds,
     feedChannelId: feedChannel.id,
     archiveChannelId: archiveChannel?.id ?? null,
     maxActiveTasksPerUser: maxActiveTasks,
@@ -165,7 +185,9 @@ export async function handleSetupCommand(
     feedChannelId: feedChannel.id,
     archiveChannelId: archiveChannel?.id ?? null,
     adminRoleId: adminRole.id,
+    secondaryManagerRoleId: secondaryManagerRole?.id ?? null,
     reviewerRoleId: reviewerRole?.id ?? null,
+    secondaryReviewerRoleId: secondaryReviewerRole?.id ?? null,
     maxActiveTasksPerUser: maxActiveTasks,
     defaultThreadAutoArchiveMinutes,
   });
@@ -175,6 +197,8 @@ export async function handleSetupCommand(
     dashboardChannelId: dashboardChannel.id,
     feedChannelId: feedChannel.id,
     archiveChannelId: archiveChannel?.id ?? null,
+    managerRoleIds,
+    reviewerRoleIds,
     summaryMessageId,
     reusedExistingSummary,
   });
@@ -185,8 +209,8 @@ export async function handleSetupCommand(
       `Dashboard summary: <#${dashboardChannel.id}>`,
       `Feed channel: <#${feedChannel.id}>`,
       `Archive channel: ${archiveChannel ? `<#${archiveChannel.id}>` : 'Not set'}`,
-      `Admin role: <@&${adminRole.id}>`,
-      `Reviewer role: ${reviewerRole ? `<@&${reviewerRole.id}>` : 'Not set'}`,
+      `Manager roles: ${formatConfiguredRoleMentions(managerRoleIds, 'Not set')}`,
+      `Reviewer roles: ${formatConfiguredRoleMentions(reviewerRoleIds, 'Managers only')}`,
       reusedExistingSummary
         ? 'The existing dashboard summary message was updated.'
         : 'A new dashboard summary message was created.',

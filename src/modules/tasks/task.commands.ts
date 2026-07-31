@@ -132,9 +132,10 @@ async function handleTaskCreateCommand(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
     })) {
     await interaction.reply({
-      content: 'Only server managers, the configured admin role, or Technician can create tasks.',
+      content: 'Only server managers or configured manager roles can create tasks.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -255,9 +256,10 @@ async function handleTaskSyncDashboardCommand(
       member: interaction.member,
       memberPermissions: interaction.memberPermissions,
       adminRoleId: guildConfig.adminRoleId,
+      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
     })) {
     await interaction.reply({
-      content: 'Only server managers, the configured admin role, or Technician can repair the dashboard.',
+      content: 'Only server managers or configured manager roles can repair the dashboard.',
       flags: MessageFlags.Ephemeral,
     });
     return;

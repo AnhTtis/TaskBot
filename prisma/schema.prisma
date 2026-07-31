@@ -29,19 +29,21 @@ enum RequiredRole {
 }
 
 model GuildConfig {
-  id                             Int      @id @default(autoincrement())
-  guildId                        String   @unique
-  dashboardChannelId             String
-  dashboardSummaryMessageId      String?
-  feedChannelId                  String
-  archiveChannelId               String?
-  adminRoleId                    String
-  reviewerRoleId                 String?
-  maxActiveTasksPerUser          Int      @default(2)
-  defaultThreadAutoArchiveMinutes Int     @default(1440)
-  createdAt                      DateTime @default(now())
-  updatedAt                      DateTime @updatedAt
-  tasks                          Task[]
+  id                              Int      @id @default(autoincrement())
+  guildId                         String   @unique
+  dashboardChannelId              String
+  dashboardSummaryMessageId       String?
+  feedChannelId                   String
+  archiveChannelId                String?
+  adminRoleId                     String
+  secondaryManagerRoleId          String?
+  reviewerRoleId                  String?
+  secondaryReviewerRoleId         String?
+  maxActiveTasksPerUser           Int      @default(2)
+  defaultThreadAutoArchiveMinutes Int      @default(1440)
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+  tasks                           Task[]
 }
 
 model Task {

@@ -4,8 +4,12 @@ import type { GuildConfig } from '@prisma/client';
 import { logger } from '../../lib/logger.js';
 import { updateGuildConfig } from '../guild-config/guild-config.repository.js';
 import { createTaskThread } from '../threads/thread.service.js';
-import { buildDashboardSummaryEmbed, buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
 import { hasTaskTeam } from './task.members.js';
+import {
+  getManagerRoleIds,
+  getReviewerRoleIds,
+} from './task.policy.js';
+import { buildDashboardSummaryEmbed, buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
 import { sendTaskFeedMessage } from './task.feed.js';
 import {
   findTaskByCodeWithMembers,
@@ -60,8 +64,8 @@ async function syncSummaryMessage(options: {
   const embed = buildDashboardSummaryEmbed({
     guildName: options.guild.name,
     refreshedByUserId: options.refreshedByUserId,
-    adminRoleId: options.guildConfig.adminRoleId,
-    reviewerRoleId: options.guildConfig.reviewerRoleId,
+    managerRoleIds: getManagerRoleIds(options.guildConfig),
+    reviewerRoleIds: getReviewerRoleIds(options.guildConfig),
     feedChannelId: options.guildConfig.feedChannelId,
     archiveChannelId: options.guildConfig.archiveChannelId,
     maxActiveTasksPerUser: options.guildConfig.maxActiveTasksPerUser,

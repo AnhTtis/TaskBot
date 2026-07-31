@@ -21,6 +21,16 @@ type TaskTeamLike = {
   readonly assigneeDiscordUserId: string | null;
 };
 
+type ManagerRoleConfig = {
+  readonly adminRoleId: string;
+  readonly secondaryManagerRoleId?: string | null;
+};
+
+type ReviewerRoleConfig = {
+  readonly reviewerRoleId?: string | null;
+  readonly secondaryReviewerRoleId?: string | null;
+};
+
 function hasRoleId(member: InteractionMemberLike | null | undefined, roleId: string): boolean {
   if (!member || typeof member !== 'object') {
     return false;
@@ -33,6 +43,10 @@ function hasRoleId(member: InteractionMemberLike | null | undefined, roleId: str
   }
 
   return maybeRoles.roles?.cache?.has(roleId) ?? false;
+}
+
+function hasAnyRoleId(member: InteractionMemberLike | null | undefined, roleIds: readonly string[]): boolean {
+  return roleIds.some((roleId) => hasRoleId(member, roleId));
 }
 
 function hasRoleName(member: InteractionMemberLike | null | undefined, roleName: string): boolean {
@@ -62,18 +76,29 @@ function hasRoleName(member: InteractionMemberLike | null | undefined, roleName:
   return false;
 }
 
-export function isAdminOverride(options: PermissionHolder & { readonly adminRoleId: string }): boolean {
+function getDistinctRoleIds(roleIds: ReadonlyArray<string | null | undefined>): string[] {
+  return [...new Set(roleIds.filter((roleId): roleId is string => Boolean(roleId)))];
+}
+
+export function getManagerRoleIds(config: ManagerRoleConfig): string[] {
+  return getDistinctRoleIds([config.adminRoleId, config.secondaryManagerRoleId]);
+}
+
+export function getReviewerRoleIds(config: ReviewerRoleConfig): string[] {
+  return getDistinctRoleIds([config.reviewerRoleId, config.secondaryReviewerRoleId]);
+}
+
+export function isAdminOverride(options: PermissionHolder & ManagerRoleConfig): boolean {
   return (
     options.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false
-  ) || hasRoleId(options.member, options.adminRoleId);
+  ) || hasAnyRoleId(options.member, getManagerRoleIds(options));
 }
 
-export function hasManagementAccess(options: PermissionHolder & { readonly adminRoleId: string }): boolean {
-  return isAdminOverride(options) || hasRoleName(options.member, 'Technician');
+export function hasManagementAccess(options: PermissionHolder & ManagerRoleConfig): boolean {
+  return isAdminOverride(options);
 }
 
-export function canClaimRequiredRole(options: PermissionHolder & {
-  readonly adminRoleId: string;
+export function canClaimRequiredRole(options: PermissionHolder & ManagerRoleConfig & {
   readonly requiredRole: RequiredRole;
 }): boolean {
   if (isAdminOverride(options)) {
@@ -90,23 +115,20 @@ export function canClaimRequiredRole(options: PermissionHolder & {
   }
 }
 
-export function canReviewTask(options: PermissionHolder & {
-  readonly adminRoleId: string;
-  readonly reviewerRoleId: string | null;
-}): boolean {
+export function canReviewTask(options: PermissionHolder & ManagerRoleConfig & ReviewerRoleConfig): boolean {
   if (hasManagementAccess(options)) {
     return true;
   }
 
-  if (!options.reviewerRoleId) {
+  const reviewerRoleIds = getReviewerRoleIds(options);
+  if (reviewerRoleIds.length === 0) {
     return false;
   }
 
-  return hasRoleId(options.member, options.reviewerRoleId);
+  return hasAnyRoleId(options.member, reviewerRoleIds);
 }
 
-export function canManageTaskProgress(options: PermissionHolder & {
-  readonly adminRoleId: string;
+export function canManageTaskProgress(options: PermissionHolder & ManagerRoleConfig & {
   readonly task: TaskTeamLike;
   readonly userId: string;
 }): boolean {

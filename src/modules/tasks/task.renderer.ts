@@ -23,8 +23,8 @@ import type {
 type BuildDashboardSummaryEmbedInput = {
   readonly guildName: string;
   readonly refreshedByUserId: string;
-  readonly adminRoleId: string;
-  readonly reviewerRoleId: string | null;
+  readonly managerRoleIds: readonly string[];
+  readonly reviewerRoleIds: readonly string[];
   readonly feedChannelId: string;
   readonly archiveChannelId: string | null;
   readonly maxActiveTasksPerUser: number;
@@ -53,6 +53,12 @@ function formatThreadArchiveLabel(minutes: number): string {
     default:
       return `${minutes} minutes`;
   }
+}
+
+function formatRoleMentions(roleIds: readonly string[], fallback: string): string {
+  return roleIds.length > 0
+    ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
+    : fallback;
 }
 
 function formatRequiredRole(role: RequiredRole): string {
@@ -248,8 +254,8 @@ export function buildDashboardSummaryEmbed(
         name: '⚙️ Configuration',
         value: wrapSection([
           `Refreshed by: <@${input.refreshedByUserId}>`,
-          `Managers: <@&${input.adminRoleId}> + Technician`,
-          `Reviewer role: ${input.reviewerRoleId ? `<@&${input.reviewerRoleId}>` : 'Admin + Technician'}`,
+          `Managers: ${formatRoleMentions(input.managerRoleIds, 'Not set')}`,
+          `Reviewer roles: ${formatRoleMentions(input.reviewerRoleIds, 'Managers only')}`,
           `Feed: <#${input.feedChannelId}>`,
           `Archive: ${input.archiveChannelId ? `<#${input.archiveChannelId}>` : 'Not set'}`,
           `Max active tasks: ${input.maxActiveTasksPerUser}`,
@@ -328,7 +334,7 @@ export function buildTaskCardEmbed(task: TaskCardTask): EmbedBuilder {
     .setDescription([SECTION_DIVIDER, '', task.description].join('\n'))
     .addFields(fields)
     .setFooter({
-      text: `Task ID ${task.id} • Admin + Technician manage review and approvals`,
+      text: `Task ID ${task.id} • Configured managers and reviewers handle approvals`,
     })
     .setTimestamp(task.updatedAt);
 }

@@ -26,8 +26,14 @@ const commands = [
     .addRoleOption((option) =>
       option
         .setName('admin_role')
-        .setDescription('Role that can administer TaskBot workflows.')
+        .setDescription('Primary role that can administer TaskBot workflows.')
         .setRequired(true),
+    )
+    .addRoleOption((option) =>
+      option
+        .setName('secondary_manager_role')
+        .setDescription('Optional second role that can administer TaskBot workflows.')
+        .setRequired(false),
     )
     .addChannelOption((option) =>
       option
@@ -39,7 +45,13 @@ const commands = [
     .addRoleOption((option) =>
       option
         .setName('reviewer_role')
-        .setDescription('Optional role that can approve tasks in review.')
+        .setDescription('Primary role that can approve tasks in review.')
+        .setRequired(false),
+    )
+    .addRoleOption((option) =>
+      option
+        .setName('secondary_reviewer_role')
+        .setDescription('Optional second role that can approve tasks in review.')
         .setRequired(false),
     )
     .addIntegerOption((option) =>
