@@ -1,6 +1,11 @@
 import type { Client } from 'discord.js';
 
-import { formatDeadlineForDisplay, getDailyReminderKey, getDeadlineReminderSummary } from '../../lib/task-datetime.js';
+import {
+  formatDeadlineForDisplay,
+  getCurrentTimeForDisplay,
+  getDailyReminderKey,
+  getDeadlineReminderSummary,
+} from '../../lib/task-datetime.js';
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
 import {
@@ -23,7 +28,9 @@ async function sendDeadlineReminderPass(client: Client): Promise<void> {
       continue;
     }
 
-    const reminderKey = getDailyReminderKey(task.deadlineAt, now);
+    const guildConfig = await findGuildConfigByGuildId(task.guildId);
+    const timezone = guildConfig?.defaultTimezone ?? 'Asia/Ho_Chi_Minh';
+    const reminderKey = getDailyReminderKey(task.deadlineAt, now, timezone);
     const alreadySent = await hasTaskReminderReceipt({
       taskId: task.id,
       recipientDiscordUserId: task.assigneeDiscordUserId,
@@ -34,14 +41,12 @@ async function sendDeadlineReminderPass(client: Client): Promise<void> {
       continue;
     }
 
-    const guildConfig = await findGuildConfigByGuildId(task.guildId);
-    const timezone = guildConfig?.defaultTimezone ?? 'Asia/Ho_Chi_Minh';
-
     try {
       const user = await client.users.fetch(task.assigneeDiscordUserId);
       await user.send([
         `⏰ Deadline update for **${task.taskCode} — ${task.title}**`,
-        getDeadlineReminderSummary(task.deadlineAt, now),
+        `Current time: ${getCurrentTimeForDisplay(timezone, now)}`,
+        getDeadlineReminderSummary(task.deadlineAt, now, timezone),
         `Deadline: ${formatDeadlineForDisplay(task.deadlineAt, timezone)}`,
         `Status: ${task.status}`,
       ].join('\n'));

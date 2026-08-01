@@ -112,12 +112,57 @@ export function getDeadlineInputHint(inputMode: DateInputMode): string {
   }
 }
 
+function getSafeTimezone(timezone: string): SupportedTimezone {
+  return isSupportedTimezone(timezone) ? timezone : 'Asia/Ho_Chi_Minh';
+}
+
+type TimezoneDateParts = {
+  readonly year: number;
+  readonly month: number;
+  readonly day: number;
+  readonly hour: number;
+  readonly minute: number;
+};
+
+function getTimezoneDateParts(date: Date, timezone: string): TimezoneDateParts {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: getSafeTimezone(timezone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    year: Number.parseInt(values.year ?? '0', 10),
+    month: Number.parseInt(values.month ?? '0', 10),
+    day: Number.parseInt(values.day ?? '0', 10),
+    hour: Number.parseInt(values.hour ?? '0', 10),
+    minute: Number.parseInt(values.minute ?? '0', 10),
+  };
+}
+
+function getTimezoneDaySerial(date: Date, timezone: string): number {
+  const parts = getTimezoneDateParts(date, timezone);
+  return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / (24 * 60 * 60 * 1000));
+}
+
+function formatTimezoneDateKey(date: Date, timezone: string): string {
+  const parts = getTimezoneDateParts(date, timezone);
+  return `${parts.year.toString().padStart(4, '0')}-${parts.month.toString().padStart(2, '0')}-${parts.day.toString().padStart(2, '0')}`;
+}
+
 export function formatDeadlineForDisplay(deadlineAt: Date | null, timezone: string): string {
   if (!deadlineAt) {
     return 'Not set';
   }
 
-  const safeTimezone = isSupportedTimezone(timezone) ? timezone : 'Asia/Ho_Chi_Minh';
+  const safeTimezone = getSafeTimezone(timezone);
   const formatter = new Intl.DateTimeFormat('vi-VN', {
     timeZone: safeTimezone,
     day: '2-digit',
@@ -133,25 +178,35 @@ export function formatDeadlineForDisplay(deadlineAt: Date | null, timezone: stri
   return `${formatted} (${suffix})`;
 }
 
-export function getDeadlineReminderSummary(deadlineAt: Date, now: Date): string {
-  const msRemaining = deadlineAt.getTime() - now.getTime();
-  const dayMs = 24 * 60 * 60 * 1000;
-
-  if (msRemaining < 0) {
-    const overdueDays = Math.max(1, Math.ceil(Math.abs(msRemaining) / dayMs));
-    return overdueDays === 1 ? 'Deadline was 1 day ago.' : `Deadline was ${overdueDays} days ago.`;
-  }
-
-  if (msRemaining < dayMs) {
-    return 'Deadline is due within 24 hours.';
-  }
-
-  const remainingDays = Math.ceil(msRemaining / dayMs);
-  return remainingDays === 1 ? 'Deadline is due in 1 day.' : `Deadline is due in ${remainingDays} days.`;
+export function getCurrentTimeForDisplay(timezone: string, now: Date = new Date()): string {
+  return formatDeadlineForDisplay(now, timezone);
 }
 
-export function getDailyReminderKey(deadlineAt: Date, now: Date): string {
-  const dueIsoDate = deadlineAt.toISOString().slice(0, 10);
-  const todayIsoDate = now.toISOString().slice(0, 10);
-  return `${todayIsoDate}:${dueIsoDate}`;
+export function getDeadlineReminderSummary(deadlineAt: Date, now: Date, timezone: string): string {
+  const dayDifference = getTimezoneDaySerial(deadlineAt, timezone) - getTimezoneDaySerial(now, timezone);
+
+  if (dayDifference < 0) {
+    const overdueDays = Math.abs(dayDifference);
+    return overdueDays === 1 ? 'Deadline passed yesterday in your timezone.' : `Deadline passed ${overdueDays} days ago in your timezone.`;
+  }
+
+  if (dayDifference === 0) {
+    if (deadlineAt.getTime() <= now.getTime()) {
+      return 'Deadline passed earlier today in your timezone.';
+    }
+
+    return 'Deadline is due today in your timezone.';
+  }
+
+  if (dayDifference === 1) {
+    return 'Deadline is due tomorrow in your timezone.';
+  }
+
+  return `Deadline is due in ${dayDifference} days in your timezone.`;
+}
+
+export function getDailyReminderKey(deadlineAt: Date, now: Date, timezone: string): string {
+  const dueDateKey = formatTimezoneDateKey(deadlineAt, timezone);
+  const todayDateKey = formatTimezoneDateKey(now, timezone);
+  return `${todayDateKey}:${dueDateKey}`;
 }
