@@ -5,10 +5,12 @@ import { routeInteraction } from './bot/interaction-router.js';
 import { requireDiscordCredentials } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
+import { startDeadlineReminderLoop } from './modules/tasks/task.reminders.js';
 
 async function main(): Promise<void> {
   const { discordToken } = requireDiscordCredentials();
   const client = createDiscordClient();
+  let reminderTimer: NodeJS.Timeout | null = null;
   let shuttingDown = false;
 
   async function shutdown(signal: NodeJS.Signals): Promise<void> {
@@ -20,6 +22,10 @@ async function main(): Promise<void> {
     logger.info(`Received ${signal}. Shutting down TaskBot...`);
 
     try {
+      if (reminderTimer) {
+        clearInterval(reminderTimer);
+        reminderTimer = null;
+      }
       client.destroy();
       await prisma.$disconnect();
       logger.info('TaskBot shutdown completed.');
@@ -43,6 +49,7 @@ async function main(): Promise<void> {
 
   logger.info('Starting TaskBot...');
   await client.login(discordToken);
+  reminderTimer = startDeadlineReminderLoop(client);
 }
 
 process.on('unhandledRejection', (reason) => {

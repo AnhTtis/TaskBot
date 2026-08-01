@@ -28,9 +28,24 @@ enum RequiredRole {
   RESEARCHER
 }
 
+enum DateInputMode {
+  ISO_ONLY
+  VIETNAM_ONLY
+  VIETNAM_OR_ISO
+}
+
+enum TaskEventType {
+  TASK_UPDATED
+  DEADLINE_SET
+  DEADLINE_CLEARED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  REMINDER_SENT
+}
+
 model GuildConfig {
-  id                              Int      @id @default(autoincrement())
-  guildId                         String   @unique
+  id                              Int           @id @default(autoincrement())
+  guildId                         String        @unique
   dashboardChannelId              String
   dashboardSummaryMessageId       String?
   feedChannelId                   String
@@ -39,10 +54,12 @@ model GuildConfig {
   secondaryManagerRoleId          String?
   reviewerRoleId                  String?
   secondaryReviewerRoleId         String?
-  maxActiveTasksPerUser           Int      @default(2)
-  defaultThreadAutoArchiveMinutes Int      @default(1440)
-  createdAt                       DateTime @default(now())
-  updatedAt                       DateTime @updatedAt
+  maxActiveTasksPerUser           Int           @default(2)
+  defaultThreadAutoArchiveMinutes Int           @default(1440)
+  defaultTimezone                 String        @default("Asia/Ho_Chi_Minh")
+  defaultDateInputMode            DateInputMode @default(VIETNAM_OR_ISO)
+  createdAt                       DateTime      @default(now())
+  updatedAt                       DateTime      @updatedAt
   tasks                           Task[]
 }
 
@@ -68,6 +85,9 @@ model Task {
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
   guildConfig            GuildConfig         @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+  attachments            TaskAttachment[]
+  reminderReceipts       TaskReminderReceipt[]
+  events                 TaskEvent[]
   members                TaskMember[]
   statusHistory          TaskStatusHistory[]
 
@@ -99,4 +119,45 @@ model TaskStatusHistory {
   task                Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId, createdAt])
+}
+
+model TaskAttachment {
+  id                  Int      @id @default(autoincrement())
+  taskId               Int
+  label                String?
+  url                  String
+  fileName             String?
+  contentType          String?
+  sizeBytes            Int?
+  addedByDiscordUserId String
+  createdAt            DateTime @default(now())
+  task                 Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+}
+
+model TaskReminderReceipt {
+  id                  Int      @id @default(autoincrement())
+  taskId               Int
+  recipientDiscordUserId String
+  reminderKey         String
+  sentAt              DateTime @default(now())
+  task                Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, recipientDiscordUserId, reminderKey])
+  @@index([recipientDiscordUserId, sentAt])
+}
+
+model TaskEvent {
+  id                  Int           @id @default(autoincrement())
+  taskId              Int
+  actorDiscordUserId  String?
+  type                TaskEventType
+  summary             String
+  details             String?
+  createdAt           DateTime      @default(now())
+  task                Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+  @@index([type, createdAt])
 }

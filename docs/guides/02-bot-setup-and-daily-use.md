@@ -20,7 +20,14 @@ Tài liệu này mô tả **code đang chạy thật**, không mô tả những 
 - `/ping`
 - `/setup`
 - `/task create`
+- `/task update-meta`
+- `/task set-deadline`
+- `/task clear-deadline`
+- `/task add-attachment`
+- `/task remove-attachment`
 - `/task sync-dashboard`
+
+Xem giải thích chi tiết từng command tại `05-command-reference.md`.
 
 ### Button workflow trên task card
 - `Claim`

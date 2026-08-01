@@ -7,6 +7,7 @@ import {
 } from 'discord.js';
 import type { Task } from '@prisma/client';
 
+import { formatDeadlineForDisplay } from '../../lib/task-datetime.js';
 import { formatTaskTeamSummary } from '../tasks/task.members.js';
 import type { TaskWithMembers } from '../tasks/task.types.js';
 
@@ -50,6 +51,7 @@ export async function createTaskThread(options: {
   readonly task: ThreadTask;
   readonly dashboardChannel: TextChannel;
   readonly autoArchiveMinutes: number;
+  readonly timezone?: string;
 }): Promise<PublicThreadChannel<boolean>> {
   if (!options.task.taskMessageId) {
     throw new Error(`Task ${options.task.id} is missing taskMessageId; cannot create thread.`);
@@ -73,7 +75,7 @@ export async function createTaskThread(options: {
       `Team: ${formatTaskTeamSummary(options.task)}`,
       `Status: ${formatThreadStatus(options.task.status)}`,
       `Priority: ${options.task.priority}`,
-      `Deadline: ${options.task.deadlineAt ? `<t:${Math.floor(options.task.deadlineAt.getTime() / 1000)}:f>` : 'Not set'}`,
+      `Deadline: ${formatDeadlineForDisplay(options.task.deadlineAt ?? null, options.timezone ?? 'Asia/Ho_Chi_Minh')}`,
       '',
       options.task.description,
     ].join('\n'),

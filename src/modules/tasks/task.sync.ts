@@ -70,6 +70,8 @@ async function syncSummaryMessage(options: {
     archiveChannelId: options.guildConfig.archiveChannelId,
     maxActiveTasksPerUser: options.guildConfig.maxActiveTasksPerUser,
     defaultThreadAutoArchiveMinutes: options.guildConfig.defaultThreadAutoArchiveMinutes,
+    defaultTimezone: options.guildConfig.defaultTimezone,
+    defaultDateInputMode: options.guildConfig.defaultDateInputMode,
     tasks,
   });
 
@@ -95,6 +97,7 @@ async function syncSummaryMessage(options: {
 async function syncTaskCardMessage(options: {
   readonly task: TaskWithMembers;
   readonly dashboardChannel: TextChannel;
+  readonly timezone: string;
 }): Promise<{ task: TaskWithMembers; recreated: boolean }> {
   const existingTaskMessage = options.task.taskMessageId
     ? await options.dashboardChannel.messages.fetch(options.task.taskMessageId).catch(() => null)
@@ -102,7 +105,7 @@ async function syncTaskCardMessage(options: {
 
   if (existingTaskMessage) {
     await existingTaskMessage.edit({
-      embeds: [buildTaskCardEmbed(options.task)],
+      embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
       components: buildTaskCardComponents(options.task),
     });
 
@@ -120,7 +123,7 @@ async function syncTaskCardMessage(options: {
   }
 
   const createdTaskMessage = await options.dashboardChannel.send({
-    embeds: [buildTaskCardEmbed(options.task)],
+    embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
     components: buildTaskCardComponents(options.task),
   });
 
@@ -140,6 +143,7 @@ async function syncTaskWorkspace(options: {
   readonly guild: Guild;
   readonly dashboardChannel: TextChannel;
   readonly autoArchiveMinutes: number;
+  readonly timezone: string;
 }): Promise<{
   task: TaskWithMembers;
   recreated: boolean;
@@ -184,6 +188,7 @@ async function syncTaskWorkspace(options: {
     task,
     dashboardChannel: options.dashboardChannel,
     autoArchiveMinutes: options.autoArchiveMinutes,
+    timezone: options.timezone,
   });
 
   task = await updateTaskWithMembers(task.id, {
@@ -231,6 +236,7 @@ export async function syncTaskDashboard(
         guild: input.guild,
         dashboardChannel: input.dashboardChannel,
         autoArchiveMinutes: input.guildConfig.defaultThreadAutoArchiveMinutes,
+        timezone: input.guildConfig.defaultTimezone,
       });
       task = workspaceResult.task;
 
@@ -261,6 +267,7 @@ export async function syncTaskDashboard(
       const cardResult = await syncTaskCardMessage({
         task,
         dashboardChannel: input.dashboardChannel,
+        timezone: input.guildConfig.defaultTimezone,
       });
       task = cardResult.task;
       taskCardsUpdated += 1;

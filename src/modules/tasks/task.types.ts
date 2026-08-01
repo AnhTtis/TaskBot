@@ -1,4 +1,10 @@
-import type { Prisma, RequiredRole, TaskPriority, TaskStatus } from '@prisma/client';
+import type {
+  Prisma,
+  RequiredRole,
+  TaskEventType,
+  TaskPriority,
+  TaskStatus,
+} from '@prisma/client';
 
 export type CreateTaskInput = {
   readonly guildId: string;
@@ -18,6 +24,30 @@ export type CreateTaskStatusHistoryInput = {
   readonly fromStatus?: TaskStatus | null;
   readonly toStatus: TaskStatus;
   readonly reason?: string | null;
+};
+
+export type CreateTaskAttachmentInput = {
+  readonly taskId: number;
+  readonly label?: string | null;
+  readonly url: string;
+  readonly fileName?: string | null;
+  readonly contentType?: string | null;
+  readonly sizeBytes?: number | null;
+  readonly addedByDiscordUserId: string;
+};
+
+export type CreateTaskEventInput = {
+  readonly taskId: number;
+  readonly actorDiscordUserId?: string | null;
+  readonly type: TaskEventType;
+  readonly summary: string;
+  readonly details?: string | null;
+};
+
+export type CreateTaskReminderReceiptInput = {
+  readonly taskId: number;
+  readonly recipientDiscordUserId: string;
+  readonly reminderKey: string;
 };
 
 export type DashboardSummaryCounts = {
@@ -52,6 +82,11 @@ export const taskWithMembersInclude = {
   members: {
     orderBy: {
       joinedAt: 'asc',
+    },
+  },
+  attachments: {
+    orderBy: {
+      createdAt: 'asc',
     },
   },
 } satisfies Prisma.TaskInclude;

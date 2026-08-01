@@ -97,6 +97,7 @@ async function deferEphemeral(interaction: RepliableInteraction): Promise<void> 
 async function editTaskCard(options: {
   readonly task: ResolvedTask;
   readonly dashboardChannel: TextChannel;
+  readonly timezone: string;
 }): Promise<void> {
   if (!options.task.taskMessageId) {
     return;
@@ -111,7 +112,7 @@ async function editTaskCard(options: {
   }
 
   await taskCardMessage.edit({
-    embeds: [buildTaskCardEmbed(options.task)],
+    embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
     components: buildTaskCardComponents(options.task),
   });
 }
@@ -180,6 +181,7 @@ async function finalizeTaskInteraction(options: {
   await editTaskCard({
     task: options.task,
     dashboardChannel: options.dashboardChannel,
+    timezone: options.guildConfig.defaultTimezone,
   });
 
   await refreshDashboardSummary({
@@ -350,6 +352,7 @@ async function handleClaimTaskInteraction(
         task: updatedTask,
         dashboardChannel,
         autoArchiveMinutes: guildConfig.defaultThreadAutoArchiveMinutes,
+        timezone: guildConfig.defaultTimezone,
       });
       threadChannelId = createdThread.id;
     }

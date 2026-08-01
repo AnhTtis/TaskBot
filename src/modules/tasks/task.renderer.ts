@@ -4,7 +4,9 @@ import {
   ButtonStyle,
   EmbedBuilder,
 } from 'discord.js';
-import type { RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/client';
+import type { DateInputMode, RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/client';
+
+import { formatDeadlineForDisplay } from '../../lib/task-datetime.js';
 
 import {
   formatTaskTeamMentions,
@@ -29,10 +31,16 @@ type BuildDashboardSummaryEmbedInput = {
   readonly archiveChannelId: string | null;
   readonly maxActiveTasksPerUser: number;
   readonly defaultThreadAutoArchiveMinutes: number;
+  readonly defaultTimezone: string;
+  readonly defaultDateInputMode: DateInputMode;
   readonly tasks: readonly DashboardSummaryTask[];
 };
 
 type TaskCardTask = Task | TaskWithMembers;
+
+type TaskCardRenderOptions = {
+  readonly timezone?: string;
+};
 
 const SECTION_DIVIDER = '────────────────────────';
 
@@ -59,6 +67,21 @@ function formatRoleMentions(roleIds: readonly string[], fallback: string): strin
   return roleIds.length > 0
     ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
     : fallback;
+}
+
+function formatDateInputMode(inputMode: DateInputMode): string {
+  switch (inputMode) {
+    case 'ISO_ONLY':
+      return 'ISO only';
+    case 'VIETNAM_ONLY':
+      return 'Việt Nam only';
+    case 'VIETNAM_OR_ISO':
+      return 'Việt Nam + ISO';
+  }
+}
+
+function hasAttachments(task: TaskCardTask): task is TaskWithMembers {
+  return 'attachments' in task && Array.isArray(task.attachments);
 }
 
 function formatRequiredRole(role: RequiredRole): string {
@@ -260,6 +283,8 @@ export function buildDashboardSummaryEmbed(
           `Archive: ${input.archiveChannelId ? `<#${input.archiveChannelId}>` : 'Not set'}`,
           `Max active tasks: ${input.maxActiveTasksPerUser}`,
           `Thread auto-archive: ${formatThreadArchiveLabel(input.defaultThreadAutoArchiveMinutes)}`,
+          `Default timezone: ${input.defaultTimezone}`,
+          `Deadline input: ${formatDateInputMode(input.defaultDateInputMode)}`,
         ]),
         inline: false,
       },
@@ -270,8 +295,12 @@ export function buildDashboardSummaryEmbed(
     .setTimestamp();
 }
 
-export function buildTaskCardEmbed(task: TaskCardTask): EmbedBuilder {
+export function buildTaskCardEmbed(
+  task: TaskCardTask,
+  options: TaskCardRenderOptions = {},
+): EmbedBuilder {
   const remainingSlots = getTaskRemainingSlots(task);
+  const timezone = options.timezone ?? 'Asia/Ho_Chi_Minh';
   const fields = [
     {
       name: 'Status',
@@ -307,10 +336,23 @@ export function buildTaskCardEmbed(task: TaskCardTask): EmbedBuilder {
     },
     {
       name: 'Deadline',
-      value: task.deadlineAt ? `<t:${Math.floor(task.deadlineAt.getTime() / 1000)}:f>` : 'Not set',
+      value: formatDeadlineForDisplay(task.deadlineAt ?? null, timezone),
       inline: true,
     },
   ];
+
+  if (hasAttachments(task) && task.attachments.length > 0) {
+    fields.push({
+      name: `Attachments (${task.attachments.length})`,
+      value: task.attachments
+        .map((attachment) => {
+          const label = attachment.label?.trim() || attachment.fileName?.trim() || `Attachment #${attachment.id}`;
+          return `#${attachment.id} • [${label}](${attachment.url})`;
+        })
+        .join('\n'),
+      inline: false,
+    });
+  }
 
   if (task.threadChannelId) {
     fields.push({
@@ -331,7 +373,14 @@ export function buildTaskCardEmbed(task: TaskCardTask): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle(`${task.taskCode} • ${task.title}`)
     .setColor(getTaskCardColor(task.status))
-    .setDescription([SECTION_DIVIDER, '', task.description].join('\n'))
+    .setDescription([
+      '### Task brief',
+      task.description,
+      '',
+      SECTION_DIVIDER,
+      '',
+      'Use manager update commands when this task needs richer context, attachments, or a new deadline.',
+    ].join('\n'))
     .addFields(fields)
     .setFooter({
       text: `Task ID ${task.id} • Configured managers and reviewers handle approvals`,

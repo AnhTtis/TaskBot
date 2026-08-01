@@ -1,9 +1,19 @@
-import type { Prisma, Task, TaskStatus } from '@prisma/client';
+import type {
+  Prisma,
+  Task,
+  TaskAttachment,
+  TaskEvent,
+  TaskReminderReceipt,
+  TaskStatus,
+} from '@prisma/client';
 
 import { prisma } from '../../lib/prisma.js';
 import type {
   AddTaskMemberResult,
+  CreateTaskAttachmentInput,
+  CreateTaskEventInput,
   CreateTaskInput,
+  CreateTaskReminderReceiptInput,
   CreateTaskStatusHistoryInput,
   DashboardSummaryCounts,
   DashboardSummaryTask,
@@ -121,6 +131,31 @@ export async function listTasksByStatus(
   });
 }
 
+export async function listTasksForDeadlineReminders(options: {
+  readonly now: Date;
+  readonly dueBefore: Date;
+}): Promise<TaskWithMembers[]> {
+  return prisma.task.findMany({
+    where: {
+      status: {
+        in: ['IN_PROGRESS', 'BLOCKED', 'REVIEW'],
+      },
+      deadlineAt: {
+        not: null,
+        lte: options.dueBefore,
+      },
+      assigneeDiscordUserId: {
+        not: null,
+      },
+      completedAt: null,
+    },
+    orderBy: {
+      deadlineAt: 'asc',
+    },
+    include: taskWithMembersInclude,
+  });
+}
+
 export async function updateTask(
   taskId: number,
   data: Prisma.TaskUncheckedUpdateInput,
@@ -146,6 +181,111 @@ export async function updateTaskWithMembers(
   }
 
   return updatedTask;
+}
+
+export async function createTaskAttachment(
+  input: CreateTaskAttachmentInput,
+): Promise<TaskAttachment> {
+  return prisma.taskAttachment.create({
+    data: {
+      taskId: input.taskId,
+      label: input.label ?? null,
+      url: input.url,
+      fileName: input.fileName ?? null,
+      contentType: input.contentType ?? null,
+      sizeBytes: input.sizeBytes ?? null,
+      addedByDiscordUserId: input.addedByDiscordUserId,
+    },
+  });
+}
+
+export async function removeTaskAttachment(options: {
+  readonly attachmentId: number;
+  readonly taskId: number;
+}): Promise<TaskAttachment | null> {
+  return prisma.$transaction(async (tx) => {
+    const attachment = await tx.taskAttachment.findFirst({
+      where: {
+        id: options.attachmentId,
+        taskId: options.taskId,
+      },
+    });
+
+    if (!attachment) {
+      return null;
+    }
+
+    await tx.taskAttachment.delete({
+      where: { id: attachment.id },
+    });
+
+    return attachment;
+  });
+}
+
+export async function listTaskAttachments(taskId: number): Promise<TaskAttachment[]> {
+  return prisma.taskAttachment.findMany({
+    where: { taskId },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+}
+
+export async function createTaskStatusHistory(
+  input: CreateTaskStatusHistoryInput,
+): Promise<void> {
+  await prisma.taskStatusHistory.create({
+    data: {
+      taskId: input.taskId,
+      actorDiscordUserId: input.actorDiscordUserId,
+      fromStatus: input.fromStatus ?? null,
+      toStatus: input.toStatus,
+      reason: input.reason ?? null,
+    },
+  });
+}
+
+export async function createTaskEvent(input: CreateTaskEventInput): Promise<TaskEvent> {
+  return prisma.taskEvent.create({
+    data: {
+      taskId: input.taskId,
+      actorDiscordUserId: input.actorDiscordUserId ?? null,
+      type: input.type,
+      summary: input.summary,
+      details: input.details ?? null,
+    },
+  });
+}
+
+export async function createTaskReminderReceipt(
+  input: CreateTaskReminderReceiptInput,
+): Promise<TaskReminderReceipt> {
+  return prisma.taskReminderReceipt.create({
+    data: {
+      taskId: input.taskId,
+      recipientDiscordUserId: input.recipientDiscordUserId,
+      reminderKey: input.reminderKey,
+    },
+  });
+}
+
+export async function hasTaskReminderReceipt(input: {
+  readonly taskId: number;
+  readonly recipientDiscordUserId: string;
+  readonly reminderKey: string;
+}): Promise<boolean> {
+  const receipt = await prisma.taskReminderReceipt.findUnique({
+    where: {
+      taskId_recipientDiscordUserId_reminderKey: {
+        taskId: input.taskId,
+        recipientDiscordUserId: input.recipientDiscordUserId,
+        reminderKey: input.reminderKey,
+      },
+    },
+  });
+
+  return Boolean(receipt);
 }
 
 export async function claimTask(
@@ -367,39 +507,25 @@ export async function countTasksByStatus(
     done: 0,
   };
 
-  for (const entry of groupedCounts) {
-    switch (entry.status) {
+  for (const group of groupedCounts) {
+    switch (group.status) {
       case 'BACKLOG':
-        counts.backlog = entry._count._all;
+        counts.backlog = group._count._all;
         break;
       case 'IN_PROGRESS':
-        counts.inProgress = entry._count._all;
+        counts.inProgress = group._count._all;
         break;
       case 'BLOCKED':
-        counts.blocked = entry._count._all;
+        counts.blocked = group._count._all;
         break;
       case 'REVIEW':
-        counts.review = entry._count._all;
+        counts.review = group._count._all;
         break;
       case 'DONE':
-        counts.done = entry._count._all;
+        counts.done = group._count._all;
         break;
     }
   }
 
   return counts;
-}
-
-export async function createTaskStatusHistory(
-  input: CreateTaskStatusHistoryInput,
-): Promise<void> {
-  await prisma.taskStatusHistory.create({
-    data: {
-      taskId: input.taskId,
-      actorDiscordUserId: input.actorDiscordUserId,
-      fromStatus: input.fromStatus ?? null,
-      toStatus: input.toStatus,
-      reason: input.reason ?? null,
-    },
-  });
 }

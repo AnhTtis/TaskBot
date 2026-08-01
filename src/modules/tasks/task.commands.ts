@@ -1,26 +1,34 @@
 import {
   ChannelType,
   MessageFlags,
+  type Attachment,
   type ChatInputCommandInteraction,
+  type Guild,
   type TextChannel,
 } from 'discord.js';
-import type { RequiredRole, TaskPriority } from '@prisma/client';
+import type { GuildConfig, RequiredRole, TaskPriority } from '@prisma/client';
 
+import {
+  getDeadlineInputHint,
+  parseDeadlineInput,
+} from '../../lib/task-datetime.js';
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
 import { refreshDashboardSummary } from '../guild-config/guild-config.service.js';
-import {
-  buildTaskCardComponents,
-  buildTaskCardEmbed,
-} from './task.renderer.js';
+import { buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
 import { hasManagementAccess } from './task.policy.js';
 import {
   createTask,
+  createTaskAttachment,
+  createTaskEvent,
   createTaskStatusHistory,
   findLatestTaskForGuild,
+  findTaskByCodeWithMembers,
+  removeTaskAttachment,
   updateTaskWithMembers,
 } from './task.repository.js';
 import { syncTaskDashboard } from './task.sync.js';
+import type { TaskWithMembers } from './task.types.js';
 
 function isTextChannel(channel: unknown): channel is TextChannel {
   return (
@@ -79,6 +87,135 @@ function normalizeTaskCodeInput(value: string | null): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeOptionalText(value: string | null): string | null {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getAttachmentUrl(file: Attachment | null, url: string | null): string | null {
+  if (file) {
+    return file.url;
+  }
+
+  return normalizeOptionalText(url);
+}
+
+async function getManagerCommandContext(
+  interaction: ChatInputCommandInteraction,
+  actionDescription: string,
+): Promise<{
+  guild: Guild;
+  guildConfig: GuildConfig;
+  dashboardChannel: TextChannel;
+} | null> {
+  if (!interaction.inGuild()) {
+    await interaction.reply({
+      content: `The ${actionDescription} command can only be used inside a server.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.reply({
+      content: 'Guild context is unavailable for this command.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  const guildConfig = await findGuildConfigByGuildId(interaction.guildId);
+  if (!guildConfig) {
+    await interaction.reply({
+      content: 'TaskBot is not configured yet. Run /setup first.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  if (!hasManagementAccess({
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+  })) {
+    await interaction.reply({
+      content: `Only server managers or configured manager roles can ${actionDescription}.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  const dashboardChannel = await guild.channels.fetch(guildConfig.dashboardChannelId);
+  if (!isTextChannel(dashboardChannel)) {
+    await interaction.reply({
+      content: 'The configured dashboard channel is unavailable or is not a text channel.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  return {
+    guild,
+    guildConfig,
+    dashboardChannel,
+  };
+}
+
+async function refreshTaskPresentation(options: {
+  readonly guild: Guild;
+  readonly guildConfig: GuildConfig;
+  readonly dashboardChannel: TextChannel;
+  readonly refreshedByUserId: string;
+  readonly task: TaskWithMembers;
+}): Promise<void> {
+  if (options.task.taskMessageId) {
+    const taskMessage = await options.dashboardChannel.messages
+      .fetch(options.task.taskMessageId)
+      .catch(() => null);
+
+    if (taskMessage) {
+      await taskMessage.edit({
+        embeds: [buildTaskCardEmbed(options.task, { timezone: options.guildConfig.defaultTimezone })],
+        components: buildTaskCardComponents(options.task),
+      });
+    }
+  }
+
+  await refreshDashboardSummary({
+    guildId: options.guild.id,
+    guildName: options.guild.name,
+    refreshedByUserId: options.refreshedByUserId,
+    dashboardChannel: options.dashboardChannel,
+    guildConfig: options.guildConfig,
+  });
+}
+
+async function resolveTaskForManagerCommand(options: {
+  readonly interaction: ChatInputCommandInteraction;
+  readonly guildId: string;
+  readonly taskCodeInput: string | null;
+}): Promise<{ taskCode: string; task: TaskWithMembers } | null> {
+  const taskCode = normalizeTaskCodeInput(options.taskCodeInput);
+  if (!taskCode) {
+    await options.interaction.editReply({
+      content: 'Task code is required.',
+    });
+    return null;
+  }
+
+  const task = await findTaskByCodeWithMembers(options.guildId, taskCode);
+  if (!task) {
+    await options.interaction.editReply({
+      content: `Could not find ${taskCode}.`,
+    });
+    return null;
+  }
+
+  return { taskCode, task };
+}
+
 export async function handleTaskCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
@@ -87,6 +224,21 @@ export async function handleTaskCommand(
   switch (subcommand) {
     case 'create':
       await handleTaskCreateCommand(interaction);
+      return;
+    case 'update-meta':
+      await handleTaskUpdateMetaCommand(interaction);
+      return;
+    case 'set-deadline':
+      await handleTaskSetDeadlineCommand(interaction);
+      return;
+    case 'clear-deadline':
+      await handleTaskClearDeadlineCommand(interaction);
+      return;
+    case 'add-attachment':
+      await handleTaskAddAttachmentCommand(interaction);
+      return;
+    case 'remove-attachment':
+      await handleTaskRemoveAttachmentCommand(interaction);
       return;
     case 'sync-dashboard':
       await handleTaskSyncDashboardCommand(interaction);
@@ -102,72 +254,35 @@ export async function handleTaskCommand(
 async function handleTaskCreateCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
-  if (!interaction.inGuild()) {
-    await interaction.reply({
-      content: 'The /task create command can only be used inside a server.',
-      flags: MessageFlags.Ephemeral,
-    });
+  const context = await getManagerCommandContext(interaction, '/task create');
+  if (!context) {
     return;
   }
 
-  const guild = interaction.guild;
-  if (!guild) {
-    await interaction.reply({
-      content: 'Guild context is unavailable for this command.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const guildConfig = await findGuildConfigByGuildId(interaction.guildId);
-  if (!guildConfig) {
-    await interaction.reply({
-      content: 'TaskBot is not configured yet. Run /setup first.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  if (!hasManagementAccess({
-      member: interaction.member,
-      memberPermissions: interaction.memberPermissions,
-      adminRoleId: guildConfig.adminRoleId,
-      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
-    })) {
-    await interaction.reply({
-      content: 'Only server managers or configured manager roles can create tasks.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const dashboardChannel = await guild.channels.fetch(guildConfig.dashboardChannelId);
-  if (!isTextChannel(dashboardChannel)) {
-    await interaction.reply({
-      content: 'The configured dashboard channel is unavailable or is not a text channel.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
+  const { guild, guildConfig, dashboardChannel } = context;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const latestTask = await findLatestTaskForGuild(interaction.guildId);
+  const latestTask = await findLatestTaskForGuild(guild.id);
   const taskCode = formatTaskCode(parseNextTaskSequence(latestTask?.taskCode ?? null));
   const priority = getPriorityValue(interaction.options.getString('priority', false));
   const deadlineInput = interaction.options.getString('deadline', false);
-  const deadlineAt = deadlineInput ? new Date(deadlineInput) : null;
+  const deadlineAt = deadlineInput
+    ? parseDeadlineInput(deadlineInput, {
+        timezone: guildConfig.defaultTimezone,
+        inputMode: guildConfig.defaultDateInputMode,
+      })
+    : null;
   const targetMemberCount = interaction.options.getInteger('team_size', false) ?? 1;
 
-  if (deadlineInput && Number.isNaN(deadlineAt?.getTime())) {
+  if (deadlineInput && !deadlineAt) {
     await interaction.editReply({
-      content: 'Deadline must be a valid ISO-8601 date string, for example 2026-07-31T18:00:00+07:00.',
+      content: `Invalid deadline. ${getDeadlineInputHint(guildConfig.defaultDateInputMode)}`,
     });
     return;
   }
 
   const task = await createTask({
-    guildId: interaction.guildId,
+    guildId: guild.id,
     taskCode,
     title: interaction.options.getString('title', true),
     description: interaction.options.getString('description', true),
@@ -186,7 +301,7 @@ async function handleTaskCreateCommand(
   });
 
   const taskCardMessage = await dashboardChannel.send({
-    embeds: [buildTaskCardEmbed(task)],
+    embeds: [buildTaskCardEmbed(task, { timezone: guildConfig.defaultTimezone })],
     components: buildTaskCardComponents(task),
   });
 
@@ -196,7 +311,7 @@ async function handleTaskCreateCommand(
   });
 
   await refreshDashboardSummary({
-    guildId: interaction.guildId,
+    guildId: guild.id,
     guildName: guild.name,
     refreshedByUserId: interaction.user.id,
     dashboardChannel,
@@ -204,7 +319,7 @@ async function handleTaskCreateCommand(
   });
 
   logger.info('Task created', {
-    guildId: interaction.guildId,
+    guildId: guild.id,
     taskId: persistedTask.id,
     taskCode: persistedTask.taskCode,
     dashboardChannelId: dashboardChannel.id,
@@ -223,57 +338,339 @@ async function handleTaskCreateCommand(
   });
 }
 
+async function handleTaskUpdateMetaCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const context = await getManagerCommandContext(interaction, 'update task metadata');
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, dashboardChannel } = context;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedTask = await resolveTaskForManagerCommand({
+    interaction,
+    guildId: guild.id,
+    taskCodeInput: interaction.options.getString('task_code', true),
+  });
+  if (!resolvedTask) {
+    return;
+  }
+
+  const title = normalizeOptionalText(interaction.options.getString('title', false));
+  const description = normalizeOptionalText(interaction.options.getString('description', false));
+  const requiredRoleRaw = interaction.options.getString('required_role', false);
+  const teamSize = interaction.options.getInteger('team_size', false);
+  const priority = getPriorityValue(interaction.options.getString('priority', false));
+
+  if (!title && !description && !requiredRoleRaw && teamSize === null && !priority) {
+    await interaction.editReply({
+      content: 'Provide at least one field to update.',
+    });
+    return;
+  }
+
+  if (teamSize !== null && teamSize < resolvedTask.task.members.length) {
+    await interaction.editReply({
+      content: `Team size cannot be smaller than the current member count (${resolvedTask.task.members.length}).`,
+    });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(resolvedTask.task.id, {
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(requiredRoleRaw ? { requiredRole: getRequiredRoleValue(requiredRoleRaw) } : {}),
+    ...(priority ? { priority } : {}),
+    ...(teamSize !== null ? { targetMemberCount: teamSize } : {}),
+  });
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'TASK_UPDATED',
+    summary: 'Manager updated task metadata.',
+    details: [
+      title ? `Title: ${title}` : null,
+      description ? 'Description updated.' : null,
+      requiredRoleRaw ? `Role: ${requiredRoleRaw}` : null,
+      priority ? `Priority: ${priority}` : null,
+      teamSize !== null ? `Team size: ${teamSize}` : null,
+    ].filter(Boolean).join(' | '),
+  });
+
+  await refreshTaskPresentation({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({
+    content: `Updated **${updatedTask.taskCode}** metadata successfully.`,
+  });
+}
+
+async function handleTaskSetDeadlineCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const context = await getManagerCommandContext(interaction, 'set task deadlines');
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, dashboardChannel } = context;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedTask = await resolveTaskForManagerCommand({
+    interaction,
+    guildId: guild.id,
+    taskCodeInput: interaction.options.getString('task_code', true),
+  });
+  if (!resolvedTask) {
+    return;
+  }
+
+  const deadlineInput = interaction.options.getString('deadline', true);
+  const deadlineAt = parseDeadlineInput(deadlineInput, {
+    timezone: guildConfig.defaultTimezone,
+    inputMode: guildConfig.defaultDateInputMode,
+  });
+
+  if (!deadlineAt) {
+    await interaction.editReply({
+      content: `Invalid deadline. ${getDeadlineInputHint(guildConfig.defaultDateInputMode)}`,
+    });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(resolvedTask.task.id, {
+    deadlineAt,
+  });
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'DEADLINE_SET',
+    summary: 'Manager set or updated the task deadline.',
+    details: deadlineInput,
+  });
+
+  await refreshTaskPresentation({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({
+    content: `Updated the deadline for **${updatedTask.taskCode}**.`,
+  });
+}
+
+async function handleTaskClearDeadlineCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const context = await getManagerCommandContext(interaction, 'clear task deadlines');
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, dashboardChannel } = context;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedTask = await resolveTaskForManagerCommand({
+    interaction,
+    guildId: guild.id,
+    taskCodeInput: interaction.options.getString('task_code', true),
+  });
+  if (!resolvedTask) {
+    return;
+  }
+
+  if (!resolvedTask.task.deadlineAt) {
+    await interaction.editReply({
+      content: `**${resolvedTask.taskCode}** does not have a deadline set.`,
+    });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(resolvedTask.task.id, {
+    deadlineAt: null,
+  });
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'DEADLINE_CLEARED',
+    summary: 'Manager cleared the task deadline.',
+  });
+
+  await refreshTaskPresentation({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({
+    content: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+  });
+}
+
+async function handleTaskAddAttachmentCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const context = await getManagerCommandContext(interaction, 'add task attachments');
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, dashboardChannel } = context;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedTask = await resolveTaskForManagerCommand({
+    interaction,
+    guildId: guild.id,
+    taskCodeInput: interaction.options.getString('task_code', true),
+  });
+  if (!resolvedTask) {
+    return;
+  }
+
+  const file = interaction.options.getAttachment('file', false);
+  const urlInput = interaction.options.getString('url', false);
+  const label = normalizeOptionalText(interaction.options.getString('label', false));
+  const url = getAttachmentUrl(file, urlInput);
+
+  if (!url) {
+    await interaction.editReply({
+      content: 'Provide either a file attachment or a URL.',
+    });
+    return;
+  }
+
+  if (file && urlInput) {
+    await interaction.editReply({
+      content: 'Use either a file attachment or a URL, not both in the same command.',
+    });
+    return;
+  }
+
+  const attachment = await createTaskAttachment({
+    taskId: resolvedTask.task.id,
+    label,
+    url,
+    fileName: file?.name ?? null,
+    contentType: file?.contentType ?? null,
+    sizeBytes: file?.size ?? null,
+    addedByDiscordUserId: interaction.user.id,
+  });
+
+  const updatedTask = await findTaskByCodeWithMembers(guild.id, resolvedTask.taskCode);
+  if (!updatedTask) {
+    await interaction.editReply({
+      content: `The attachment was saved, but ${resolvedTask.taskCode} could not be reloaded.`,
+    });
+    return;
+  }
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'ATTACHMENT_ADDED',
+    summary: 'Manager added a task attachment.',
+    details: `${attachment.id} • ${attachment.label ?? attachment.fileName ?? attachment.url}`,
+  });
+
+  await refreshTaskPresentation({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({
+    content: `Added attachment #${attachment.id} to **${updatedTask.taskCode}**.`,
+  });
+}
+
+async function handleTaskRemoveAttachmentCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
+  const context = await getManagerCommandContext(interaction, 'remove task attachments');
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, dashboardChannel } = context;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const resolvedTask = await resolveTaskForManagerCommand({
+    interaction,
+    guildId: guild.id,
+    taskCodeInput: interaction.options.getString('task_code', true),
+  });
+  if (!resolvedTask) {
+    return;
+  }
+
+  const attachmentId = interaction.options.getInteger('attachment_id', true);
+  const removedAttachment = await removeTaskAttachment({
+    attachmentId,
+    taskId: resolvedTask.task.id,
+  });
+
+  if (!removedAttachment) {
+    await interaction.editReply({
+      content: `Could not find attachment #${attachmentId} on **${resolvedTask.taskCode}**.`,
+    });
+    return;
+  }
+
+  const updatedTask = await findTaskByCodeWithMembers(guild.id, resolvedTask.taskCode);
+  if (!updatedTask) {
+    await interaction.editReply({
+      content: `Removed attachment #${attachmentId}, but ${resolvedTask.taskCode} could not be reloaded.`,
+    });
+    return;
+  }
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'ATTACHMENT_REMOVED',
+    summary: 'Manager removed a task attachment.',
+    details: `${removedAttachment.id} • ${removedAttachment.label ?? removedAttachment.fileName ?? removedAttachment.url}`,
+  });
+
+  await refreshTaskPresentation({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({
+    content: `Removed attachment #${removedAttachment.id} from **${updatedTask.taskCode}**.`,
+  });
+}
+
 async function handleTaskSyncDashboardCommand(
   interaction: ChatInputCommandInteraction,
 ): Promise<void> {
-  if (!interaction.inGuild()) {
-    await interaction.reply({
-      content: 'The /task sync-dashboard command can only be used inside a server.',
-      flags: MessageFlags.Ephemeral,
-    });
+  const context = await getManagerCommandContext(interaction, 'repair the dashboard');
+  if (!context) {
     return;
   }
 
-  const guild = interaction.guild;
-  if (!guild) {
-    await interaction.reply({
-      content: 'Guild context is unavailable for this command.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const guildConfig = await findGuildConfigByGuildId(interaction.guildId);
-  if (!guildConfig) {
-    await interaction.reply({
-      content: 'TaskBot is not configured yet. Run /setup first.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  if (!hasManagementAccess({
-      member: interaction.member,
-      memberPermissions: interaction.memberPermissions,
-      adminRoleId: guildConfig.adminRoleId,
-      secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
-    })) {
-    await interaction.reply({
-      content: 'Only server managers or configured manager roles can repair the dashboard.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const dashboardChannel = await guild.channels.fetch(guildConfig.dashboardChannelId);
-  if (!isTextChannel(dashboardChannel)) {
-    await interaction.reply({
-      content: 'The configured dashboard channel is unavailable or is not a text channel.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
+  const { guild, guildConfig, dashboardChannel } = context;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
@@ -300,21 +697,16 @@ async function handleTaskSyncDashboardCommand(
     }
 
     if (result.warnings.length > 0) {
-      lines.push('', `Warnings (${result.warnings.length}):`, ...result.warnings.slice(0, 10));
+      lines.push('', 'Warnings:', ...result.warnings.map((warning) => `- ${warning}`));
     }
 
     await interaction.editReply({
       content: lines.join('\n'),
     });
   } catch (error) {
-    logger.error('Task dashboard sync failed', {
-      guildId: interaction.guildId,
-      error,
-    });
-
-    const message = error instanceof Error ? error.message : 'Dashboard sync failed unexpectedly.';
+    logger.error('Task dashboard sync failed', error);
     await interaction.editReply({
-      content: message,
+      content: 'Task dashboard sync failed. Check the bot logs for details.',
     });
   }
 }

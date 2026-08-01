@@ -142,9 +142,16 @@ Schema chính nằm ở `prisma/schema.prisma`:
 | Command | Mục đích | Ghi chú |
 |---|---|---|
 | `/ping` | kiểm tra bot online | health check nhanh |
-| `/setup` | cấu hình dashboard/feed/admin/reviewer/archive | yêu cầu `Manage Server` |
+| `/setup` | cấu hình server cho TaskBot | dashboard/feed/archive, manager/reviewer roles, timezone, deadline input mode |
 | `/task create` | tạo task backlog mới | có `team_size`, `priority`, `deadline` |
+| `/task update-meta` | manager sửa metadata task | sửa `title`, `description`, `required_role`, `priority`, `team_size` |
+| `/task set-deadline` | manager đặt hoặc đổi deadline | hỗ trợ `dd/MM/yyyy HH:mm` hoặc ISO-8601 |
+| `/task clear-deadline` | manager xóa deadline | dùng khi task chưa cần deadline nữa |
+| `/task add-attachment` | manager thêm file hoặc link tham chiếu | hỗ trợ file Discord upload hoặc URL |
+| `/task remove-attachment` | manager gỡ attachment khỏi task | dùng `attachment_id` hiển thị trên task card |
 | `/task sync-dashboard` | repair summary/task cards/threads từ DB | dùng khi Discord bị lệch state |
+
+> Xem tài liệu chi tiết đầy đủ tại [`docs/guides/05-command-reference.md`](docs/guides/05-command-reference.md).
 
 ### Buttons / actions
 
@@ -344,6 +351,7 @@ Nếu bot gặp lỗi, xử lý nhanh theo thứ tự:
 - [02. Cài đặt và sử dụng bot](docs/guides/02-bot-setup-and-daily-use.md)
 - [03. Hosting và vận hành](docs/guides/03-hosting-and-operations.md)
 - [04. Xử lý sự cố và khôi phục](docs/guides/04-troubleshooting-and-recovery.md)
+- [05. Command reference](docs/guides/05-command-reference.md)
 
 ### Specs
 - [Discord UX & Workflow Spec](docs/specs/01-discord-ux-workflow.md)
