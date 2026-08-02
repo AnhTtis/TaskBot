@@ -268,66 +268,28 @@ export async function handleTaskAutocompleteInteraction(
   }
 
   const focusedOption = interaction.options.getFocused(true);
-  if (focusedOption.name === 'task_code') {
-    const query = String(focusedOption.value ?? '').trim().toLowerCase();
-    const tasks = (await listTasksForGuild(interaction.guildId)).reverse();
-    const filteredTasks = tasks
-      .filter((task) => {
-        if (query.length === 0) {
-          return true;
-        }
-
-        return task.taskCode.toLowerCase().includes(query) || task.title.toLowerCase().includes(query);
-      })
-      .slice(0, 25)
-      .map((task) => ({
-        name: truncateChoiceLabel(`${task.taskCode} • ${task.title} • ${formatTaskStatusLabel(task.status)}`),
-        value: task.taskCode,
-      }));
-
-    await interaction.respond(filteredTasks);
+  if (focusedOption.name !== 'task_code') {
+    await interaction.respond([]);
     return;
   }
 
-  if (focusedOption.name === 'attachment_id') {
-    const taskCode = normalizeTaskCodeInput(interaction.options.getString('task_code', false));
-    if (!taskCode) {
-      await interaction.respond([]);
-      return;
-    }
+  const query = String(focusedOption.value ?? '').trim().toLowerCase();
+  const tasks = (await listTasksForGuild(interaction.guildId)).reverse();
+  const filteredTasks = tasks
+    .filter((task) => {
+      if (query.length === 0) {
+        return true;
+      }
 
-    const task = await findTaskByCodeWithMembers(interaction.guildId, taskCode);
-    if (!task) {
-      await interaction.respond([]);
-      return;
-    }
+      return task.taskCode.toLowerCase().includes(query) || task.title.toLowerCase().includes(query);
+    })
+    .slice(0, 25)
+    .map((task) => ({
+      name: truncateChoiceLabel(`${task.taskCode} • ${task.title} • ${formatTaskStatusLabel(task.status)}`),
+      value: task.taskCode,
+    }));
 
-    const query = String(focusedOption.value ?? '').trim().toLowerCase();
-    const choices = [...task.attachments]
-      .reverse()
-      .filter((attachment) => {
-        if (query.length === 0) {
-          return true;
-        }
-
-        return [
-          attachment.id.toString(),
-          attachment.fileName ?? '',
-          attachment.label ?? '',
-          attachment.url,
-        ].some((value) => value.toLowerCase().includes(query));
-      })
-      .slice(0, 25)
-      .map((attachment) => ({
-        name: truncateChoiceLabel(`#${attachment.id} • ${formatAttachmentTargetLabel(attachment)}`),
-        value: attachment.id.toString(),
-      }));
-
-    await interaction.respond(choices);
-    return;
-  }
-
-  await interaction.respond([]);
+  await interaction.respond(filteredTasks);
 }
 
 export async function handleTaskCommand(
@@ -335,34 +297,15 @@ export async function handleTaskCommand(
 ): Promise<void> {
   const subcommand = interaction.options.getSubcommand();
 
-  switch (subcommand) {
-    case 'create':
-      await handleTaskCreateCommand(interaction);
-      return;
-    case 'update-meta':
-      await handleTaskUpdateMetaCommand(interaction);
-      return;
-    case 'set-deadline':
-      await handleTaskSetDeadlineCommand(interaction);
-      return;
-    case 'clear-deadline':
-      await handleTaskClearDeadlineCommand(interaction);
-      return;
-    case 'add-attachment':
-      await handleTaskAddAttachmentCommand(interaction);
-      return;
-    case 'remove-attachment':
-      await handleTaskRemoveAttachmentCommand(interaction);
-      return;
-    case 'sync-dashboard':
-      await handleTaskSyncDashboardCommand(interaction);
-      return;
-    default:
-      await interaction.reply({
-        content: `Unsupported task subcommand: ${subcommand}`,
-        flags: MessageFlags.Ephemeral,
-      });
+  if (subcommand !== 'add-attachment') {
+    await interaction.reply({
+      content: `Unsupported task subcommand: ${subcommand}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
   }
+
+  await handleTaskAddAttachmentCommand(interaction);
 }
 
 async function handleTaskCreateCommand(

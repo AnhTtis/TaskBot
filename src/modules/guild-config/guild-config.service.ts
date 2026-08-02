@@ -193,7 +193,10 @@ export async function handleSetupCommand(
       .catch(() => null);
 
     if (existingMessage) {
-      await existingMessage.edit({ embeds: [embed] });
+      await existingMessage.edit({
+        embeds: [embed],
+        components: buildDashboardSummaryComponents(),
+      });
       summaryMessageId = existingMessage.id;
       reusedExistingSummary = true;
     }

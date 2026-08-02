@@ -1,198 +1,325 @@
 # TaskBot
 
-TaskBot là bot quản lý công việc chạy trực tiếp trong Discord cho nhóm nhỏ và vừa, ưu tiên workflow nhanh, rõ trách nhiệm, dễ phục hồi khi Discord bị lệch trạng thái. Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện vận hành:
+TaskBot là bot quản lý công việc chạy trực tiếp trong Discord cho nhóm nhỏ và vừa.
 
-- 1 summary dashboard ở `#task-dashboard`
-- 1 task card cho mỗi task
-- 1 workspace thread public cho mỗi task đang hoạt động
+Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện vận hành:
+- 1 **dashboard summary** trong `#task-dashboard`
+- 1 **task card** cho mỗi task
+- 1 **public workspace thread** cho mỗi task đang hoạt động
 - SQLite/Prisma làm **source of truth**
-- `/task sync-dashboard` để repair khi message hoặc thread bị lệch
+- các thao tác hằng ngày chủ yếu đi qua **buttons + modal + panel ephemeral/private**
 
-## Trạng thái dự án
+---
 
-- Phiên bản hiện tại: `0.1.0`
+## 1. Trạng thái hiện tại
+
+- Version hiện tại: `0.1.0`
 - Mức độ hoàn thiện: **MVP+ vận hành được**
-- Mục tiêu phù hợp nhất hiện nay:
-  - 1 server Discord chính
+- Phù hợp nhất cho:
+  - 1 Discord server chính
   - 1 bot process
   - 1 SQLite database trên persistent storage
   - nhóm cộng tác nhỏ cần quản lý task ngay trong Discord
 
-## Tính năng chính hiện đã hỗ trợ
+---
 
-### Dashboard và workflow
+## 2. TaskBot hiện hỗ trợ gì
+
+### 2.1. Dashboard và workflow
 - summary dashboard tự refresh khi task thay đổi
 - task card chi tiết cho từng task
 - workflow trạng thái:
-  - `Backlog`
-  - `In Progress`
-  - `Blocked`
-  - `Review`
-  - `Done`
-- task thread public tự tạo/mở lại khi cần
-- repair dashboard/card/thread từ DB bằng `/task sync-dashboard`
+  - `BACKLOG`
+  - `IN_PROGRESS`
+  - `BLOCKED`
+  - `REVIEW`
+  - `DONE`
+- workspace thread public tự tạo/mở lại khi cần
+- repair dashboard/card/thread từ DB
+- reminder deadline riêng tư qua DM
 
-### Team-based task
+### 2.2. Team-based task
 - task có `team_size`
 - 1 task có thể có nhiều thành viên
-- hiện `Join Task` chỉ xuất hiện khi task còn thiếu người
-- summary hiển thị team active theo từng task
+- `Join Task` chỉ hiện khi task còn thiếu người
+- summary hiển thị active teams
 
-### Quyền vận hành
-- `Admin` là vai trò quản lý chính
-- `Technician` có thể hỗ trợ `Admin` trong nhiều thao tác quản lý/review theo implementation hiện tại
-- `Researcher` là contributor theo required role
-- contributor claim/join hiện vẫn dựa trên **tên role Discord**:
+### 2.3. Quyền vận hành
+- `Admin` là role quản lý chính
+- có thể cấu hình thêm manager/reviewer role trong `/setup`
+- contributor claim/join hiện vẫn phụ thuộc tên role Discord:
   - `Technician`
   - `Researcher`
 
-## Phạm vi implementation hiện tại
+---
 
-### Đã implement
-- `/ping`
-- `/setup`
-- `/task create`
-- `/task sync-dashboard`
-- button workflow:
-  - `Claim`
-  - `Join Task`
+## 3. Command surface hiện tại
+
+TaskBot hiện **không dùng slash command cho phần quản lý task hằng ngày** nữa, ngoại trừ 1 command fallback cho upload file.
+
+### Slash commands còn giữ lại
+
+| Command | Mục đích | Ai dùng |
+|---|---|---|
+| `/ping` | kiểm tra bot còn online không | mọi người |
+| `/setup` | cấu hình bot cho server | người có `Manage Server` |
+| `/task add-attachment` | fallback upload file attachment vào task | manager/configured manager |
+
+### Ý nghĩa của `/task add-attachment`
+Command này tồn tại để xử lý giới hạn kỹ thuật của Discord: nút/modal không mở file picker native như slash attachment option.
+
+Bot sẽ cố giữ:
+- **tên file gốc đúng như Discord gửi cho bot**
+- **không chủ động bỏ dấu / không slugify / không rename**
+
+---
+
+## 4. Flow nút hiện tại
+
+## 4.1. Summary dashboard buttons
+
+Ngay dưới summary dashboard sẽ có các nút:
+- `My Tasks`
+- `Review Queue`
+- `Create Task`
+- `Manager Console`
+
+### Ý nghĩa
+- `My Tasks`: xem các task active của chính bạn
+- `Review Queue`: reviewer/manager xem các task đang chờ review
+- `Create Task`: manager tạo task mới bằng modal
+- `Manager Console`: manager mở panel vận hành riêng
+
+---
+
+## 4.2. Task card public buttons
+
+Task card public chỉ giữ các nút cơ bản, tùy theo trạng thái task.
+
+### `BACKLOG`
+- `Claim`
+- `Open Task`
+
+### `IN_PROGRESS` / `BLOCKED`
+- `Join Task` *(nếu còn slot)*
+- `Progress`
+- `Open Workspace` *(nếu đã có thread)*
+
+### `REVIEW`
+- `Review`
+- `Open Workspace`
+
+### `DONE`
+- `Results`
+- `Open Workspace`
+
+Lưu ý:
+- cùng một public message Discord **không thể hiện bộ nút khác nhau cho từng người xem**
+- vì vậy các nút nhạy cảm được đưa vào **panel ephemeral/private** sau khi bấm
+
+---
+
+## 4.3. Panel private theo role và trạng thái
+
+Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp với task state và quyền của người bấm.
+
+### Trước khi task được nhận (`BACKLOG`)
+- contributor đủ role có thể `Claim`
+- manager có nút `Update Task`
+- `Update Task` mở hub quản lý gồm:
+  - `Update Details`
+  - `Update Deadline` / `Clear Deadline`
+  - `Attachments`
+  - `Repair Task`
+
+### Sau khi task đã active
+#### `IN_PROGRESS`
+- task member / manager có thể:
   - `Block`
-  - `Unblock`
   - `Done / Review`
+- người khác nếu đủ role và còn slot có thể `Join Task`
+
+#### `BLOCKED`
+- task member / manager có thể `Unblock`
+
+#### `REVIEW`
+- reviewer / manager có thể:
   - `Approve`
   - `Request Changes`
-  - `Reopen`
-  - `Open Workspace`
 
-### Đã có nhưng còn giới hạn MVP
-- backend vẫn dùng SQLite
-- chỉ phù hợp **single-process / single-instance**
-- `archive_channel` đang được cấu hình và hiển thị, nhưng chưa tự động post bản ghi task done vào đó
-- chưa có Dockerfile / systemd unit / cloud deployment template đi kèm repo
+#### `DONE`
+- reviewer / manager có thể `Reopen`
 
-### Chưa implement / spec-only
-- web dashboard riêng
-- private workspace theo từng member task
-- automated backup
-- observability/metrics nâng cao
-- CI/test suite hoàn chỉnh
+### Tối ưu nút
+Bot nên cập nhật lại:
+- **public task card** nếu state đổi
+- **panel private của người vừa bấm** nếu có thể
 
-## Kiến trúc tổng quan
+Mục tiêu là bấm xong thấy đúng nút tiếp theo, hạn chế phải mở lại panel nhiều lần.
+
+---
+
+## 4.4. Attachment flow bằng nút
+
+Trong `Update Task` -> `Attachments`, manager sẽ có panel riêng để:
+- `Add URL`
+- `Add File`
+- `Remove Attachment`
+
+### `Add URL`
+- mở modal để nhập link
+- có thể thêm note/label
+
+### `Add File`
+- bot hiển thị hướng dẫn upload file
+- upload file thật hiện vẫn đi qua command fallback:
+  - `/task add-attachment`
+- giới hạn file theo **Discord/server upload limit**
+
+### `Remove Attachment`
+- gỡ attachment khỏi task
+
+### Nguyên tắc tên file
+- file attachment hiển thị ưu tiên theo `fileName`
+- bot **không chủ động đổi tên file**
+- bot **không chủ động bỏ dấu tiếng Việt**
+- label/note là metadata riêng, không thay thế tên file gốc
+
+---
+
+## 5. Setup Discord server như thế nào
+
+## 5.1. Role nên có
+Khuyến nghị role chuẩn:
+- `Admin`
+- `Technician`
+- `Researcher`
+
+### Ý nghĩa
+- `Admin`: vận hành bot, setup, review, repair
+- `Technician`: contributor cho task kỹ thuật
+- `Researcher`: contributor cho task nghiên cứu
+
+### Quan trọng
+Code hiện tại kiểm tra claim/join contributor theo **đúng tên role Discord**:
+- `Technician`
+- `Researcher`
+
+Nếu bạn đổi tên khác, claim/join sẽ lệch logic hiện tại.
+
+---
+
+## 5.2. Channel nên có
+Khuyến nghị tối thiểu:
+
+### Category: TASKBOT
+- `#task-dashboard`
+- `#task-feed`
+- `#task-archive` *(optional)*
+
+### Category: THẢO LUẬN
+- `#chung`
+
+TaskBot dùng:
+- `#task-dashboard` để post summary + task cards
+- `#task-feed` để post repair notice / sync report / lỗi vận hành
+- workspace chính là **thread động** dưới task card, không cần tạo quá nhiều channel tĩnh
+
+---
+
+## 5.3. Quyền bot cần có
+Bot nên được invite với scopes:
+- `bot`
+- `applications.commands`
+
+Bot cần đủ quyền ở dashboard/feed/thread:
+- xem channel
+- gửi tin nhắn
+- xem lịch sử tin nhắn
+- embed links
+- attach files
+- tạo public thread
+- gửi tin nhắn trong thread
+- manage threads
+
+Người chạy `/setup` cần có:
+- `Manage Server` / `ManageGuild`
+
+---
+
+## 5.4. Chạy `/setup`
+Sau khi bot vào server, chạy:
 
 ```text
-src/
-  index.ts                         # app entrypoint
-  config/
-    env.ts                         # env validation
-  bot/
-    client.ts                      # Discord client setup
-    interaction-router.ts          # slash/button/modal routing
-    register-commands.ts           # command registration
-  lib/
-    logger.ts                      # structured console logging
-    prisma.ts                      # Prisma singleton
-  modules/
-    guild-config/                  # /setup + summary config
-    tasks/                         # create/sync/interactions/repository/renderer/policy
-    threads/                       # workspace thread lifecycle
-prisma/
-  schema.prisma                    # SQLite schema
-  migrations/                      # Prisma migrations
-docs/
-  guides/                          # vận hành thực tế
-  specs/                           # đặc tả thiết kế/kiến trúc
+/setup
 ```
 
-## Domain model
+### Các field chính trong `/setup`
+- `dashboard_channel`
+- `feed_channel`
+- `archive_channel` *(optional)*
+- `admin_role`
+- `secondary_manager_role` *(optional)*
+- `reviewer_role` *(optional)*
+- `secondary_reviewer_role` *(optional)*
+- `max_active_tasks`
+- `thread_auto_archive_minutes`
+- `default_timezone`
+- `default_date_input_mode`
 
-Schema chính nằm ở `prisma/schema.prisma`:
+### Kết quả sau `/setup`
+- bot lưu config vào DB
+- bot tạo/update summary dashboard
+- summary dashboard sẽ có các nút:
+  - `My Tasks`
+  - `Review Queue`
+  - `Create Task`
+  - `Manager Console`
 
-- `GuildConfig` — cấu hình từng Discord server
-- `Task` — task chính, trạng thái, role, priority, deadline, message/thread refs
-- `TaskMember` — thành viên tham gia task
-- `TaskStatusHistory` — lịch sử chuyển trạng thái
+Nếu summary cũ không có nút mới, chạy lại `/setup` sau khi deploy bản mới.
 
-## Workflow model
+---
 
-### Trạng thái
-- `BACKLOG`
-- `IN_PROGRESS`
-- `BLOCKED`
-- `REVIEW`
-- `DONE`
+## 6. Cách dùng hằng ngày
 
-### Actor model hiện tại
-- `Admin`
-  - setup server
-  - tạo task
-  - sync dashboard
-  - override workflow khi cần
-  - review / approve / reopen
-- `Technician`
-  - claim/join task `TECHNICIAN`
-  - hỗ trợ quản lý/review theo implementation hiện tại
-- `Researcher`
-  - claim/join task `RESEARCHER`
-  - thực hiện workflow contributor
+## 6.1. Manager
+Manager thường làm các việc:
+1. vào `#task-dashboard`
+2. bấm `Create Task` để tạo task mới
+3. bấm `Manager Console` khi cần repair
+4. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
+5. nếu task còn `BACKLOG`, dùng `Update Task` để tinh chỉnh trước khi ai đó nhận
 
-## Slash command và action reference
+## 6.2. Contributor
+Contributor thường làm các việc:
+1. mở task card `BACKLOG`
+2. bấm `Claim` nếu đúng role
+3. nếu task đã active và còn slot, bấm `Join Task`
+4. làm việc trong `Open Workspace`
+5. khi đang làm:
+   - `Block`
+   - `Done / Review`
 
-### Slash commands
+## 6.3. Reviewer
+Reviewer thường làm các việc:
+1. bấm `Review Queue`
+2. mở task card đang `REVIEW`
+3. bấm `Review`
+4. chọn:
+   - `Approve`
+   - `Request Changes`
 
-| Command | Mục đích | Ghi chú |
-|---|---|---|
-| `/ping` | kiểm tra bot online | health check nhanh |
-| `/setup` | cấu hình server cho TaskBot | dashboard/feed/archive, manager/reviewer roles, timezone, deadline input mode |
-| `/task create` | tạo task backlog mới | có `team_size`, `priority`, `deadline` |
-| `/task update-meta` | manager sửa metadata task | sửa `title`, `description`, `required_role`, `priority`, `team_size` |
-| `/task set-deadline` | manager đặt hoặc đổi deadline | hỗ trợ `dd/MM/yyyy HH:mm` hoặc ISO-8601 |
-| `/task clear-deadline` | manager xóa deadline | dùng khi task chưa cần deadline nữa |
-| `/task add-attachment` | manager thêm file hoặc link tham chiếu | hỗ trợ file Discord upload hoặc URL |
-| `/task remove-attachment` | manager gỡ attachment khỏi task | dùng `attachment_id` hiển thị trên task card |
-| `/task sync-dashboard` | repair summary/task cards/threads từ DB | dùng khi Discord bị lệch state |
+---
 
-> Xem tài liệu chi tiết đầy đủ tại [`docs/guides/05-command-reference.md`](docs/guides/05-command-reference.md).
+## 7. Cài đặt và chạy local
 
-### Buttons / actions
-
-| Action | Khi xuất hiện | Ghi chú |
-|---|---|---|
-| `Claim` | task đang `Backlog` | contributor phù hợp hoặc admin override |
-| `Join Task` | task `In Progress` / `Blocked` và còn slot | task team model |
-| `Block` | task `In Progress` | cần nhập lý do |
-| `Unblock` | task `Blocked` | trả về `In Progress` |
-| `Done / Review` | task `In Progress` | đưa task sang `Review` |
-| `Approve` | task `Review` | đánh dấu `Done` |
-| `Request Changes` | task `Review` | trả về `In Progress` |
-| `Reopen` | task `Done` | đưa task về `Backlog` |
-| `Open Workspace` | task có thread | mở thread làm việc |
-
-## Yêu cầu trước khi chạy
-
-Bạn nên có sẵn:
+## Yêu cầu
 - Node.js `>=24.0.0`
 - npm
 - bot Discord đã tạo trong Developer Portal
-- bot đã được mời vào server với scopes:
-  - `bot`
-  - `applications.commands`
-- bot có đủ quyền Discord tại channel dashboard/feed/thread
-- persistent storage nếu dùng thật với SQLite
+- `.env` dựa trên `.env.example`
 
-## Biến môi trường
-
-Tạo `.env` từ `.env.example`.
-
-| Biến | Bắt buộc | Ví dụ | Dùng cho | Ghi chú |
-|---|---|---|---|---|
-| `DISCORD_TOKEN` | có | `...` | runtime + register | secret, không commit |
-| `CLIENT_ID` | có | `1234567890` | register | Discord Application ID |
-| `DATABASE_URL` | có | `file:./dev.db` | Prisma | local mặc định, production nên dùng path persistent rõ ràng |
-| `GUILD_ID` | không | `1234567890` | register | nên dùng khi test nhanh trên 1 server |
-| `NODE_ENV` | nên có | `development` / `production` | env validation | production nên set rõ `production` |
-
-Ví dụ local development:
-
+### Ví dụ `.env` local
 ```env
 DISCORD_TOKEN=your_bot_token_here
 CLIENT_ID=your_discord_application_id_here
@@ -201,17 +328,7 @@ GUILD_ID=your_test_server_id_here
 NODE_ENV=development
 ```
 
-Ví dụ production trên host có persistent storage:
-
-```env
-DISCORD_TOKEN=your_bot_token_here
-CLIENT_ID=your_discord_application_id_here
-DATABASE_URL=file:/opt/taskbot/data/taskbot.db
-NODE_ENV=production
-```
-
-## Quick start local
-
+## Các bước local
 1. Cài dependency:
    ```bash
    npm install
@@ -235,24 +352,34 @@ NODE_ENV=production
 6. Trong Discord:
    - test `/ping`
    - chạy `/setup`
-   - tạo task đầu tiên bằng `/task create`
+   - bấm `Create Task` từ summary dashboard
 
 Nếu PowerShell chặn `npm.ps1`, dùng `npm.cmd` thay cho `npm`.
 
-## Quick start production
+---
 
-TaskBot **không phải web app HTTP**. Hãy deploy như một **background worker / long-running process**, không phải serverless function hay static hosting.
+## 8. Deploy production
 
-### Mô hình khuyến nghị hiện tại
+TaskBot **không phải web app HTTP**. Hãy deploy như một **background worker / long-running process**.
+
+### Mô hình khuyến nghị
 - 1 VPS hoặc máy luôn bật
 - 1 process bot
-- PM2 để giữ process sống
-- SQLite nằm trên persistent storage
+- PM2 giữ process sống
+- SQLite trên persistent storage
 
-### Quy trình deploy production
-1. Clone source code lên host.
-2. Tạo `.env` với giá trị production.
-3. Cài dependency sạch bằng lockfile:
+### Ví dụ `.env` production
+```env
+DISCORD_TOKEN=your_bot_token_here
+CLIENT_ID=your_discord_application_id_here
+DATABASE_URL=file:/opt/taskbot/data/taskbot.db
+NODE_ENV=production
+```
+
+### Quy trình deploy
+1. Clone source code lên host
+2. Tạo `.env`
+3. Cài dependency sạch:
    ```bash
    npm ci
    ```
@@ -264,11 +391,11 @@ TaskBot **không phải web app HTTP**. Hãy deploy như một **background work
    ```bash
    npm run prisma:generate
    ```
-6. Chạy migration production-safe:
+6. Chạy migration production:
    ```bash
    npm run prisma:migrate:deploy
    ```
-7. Register slash commands khi cần:
+7. Register slash commands:
    ```bash
    npm run register:commands
    ```
@@ -281,7 +408,7 @@ TaskBot **không phải web app HTTP**. Hãy deploy như một **background work
    npm run start
    ```
 
-### Chạy lâu dài bằng PM2
+### PM2
 ```bash
 pm2 start npm --name taskbot -- run start
 pm2 logs taskbot
@@ -289,7 +416,9 @@ pm2 restart taskbot
 pm2 save
 ```
 
-## Scripts chính
+---
+
+## 9. Scripts chính
 
 | Script | Mục đích |
 |---|---|
@@ -297,69 +426,58 @@ pm2 save
 | `npm run build` | build TypeScript ra `dist/` |
 | `npm run start` | chạy bản build production |
 | `npm run typecheck` | kiểm tra TypeScript |
-| `npm run clean` | xóa `dist/` theo cách cross-platform |
+| `npm run clean` | xóa `dist/` |
 | `npm run register:commands` | register slash commands |
 | `npm run prisma:generate` | generate Prisma client |
 | `npm run prisma:validate` | validate Prisma schema |
-| `npm run prisma:migrate:dev` | migration local development |
+| `npm run prisma:migrate:dev` | migration local |
 | `npm run prisma:migrate:deploy` | migration production |
 
-## Vận hành và an toàn dữ liệu
+---
 
-### SQLite lưu ý cực kỳ quan trọng
-- chỉ chạy **1 instance bot**
-- không phù hợp scale nhiều replica
-- DB file phải nằm trên persistent storage
-- backup DB trước khi:
-  - deploy
-  - migrate schema
-  - chuyển host
-- không deploy trên môi trường filesystem ephemeral nếu chưa gắn volume bền vững
+## 10. Troubleshooting nhanh
 
-### Khi nào phải chạy lại `register:commands`
-- đổi tên command
-- đổi description
-- đổi options
-- thêm/xóa command
-- đổi `GUILD_ID`
-
-## Troubleshooting fast path
-
-Nếu bot gặp lỗi, xử lý nhanh theo thứ tự:
+Nếu bot có vấn đề, kiểm tra theo thứ tự:
 1. test `/ping`
 2. kiểm tra log `Logged in as ...`
 3. kiểm tra `.env`
 4. kiểm tra command đã register chưa
 5. kiểm tra quyền bot ở dashboard/feed/thread
-6. kiểm tra role `Admin`, `Technician`, `Researcher`
-7. nếu Discord bị lệch state, chạy `/task sync-dashboard`
+6. chạy lại `/setup`
+7. nếu Discord state lệch, vào `Manager Console` -> `Repair Dashboard`
 
-## Giới hạn hiện tại
+### Khi không thấy nút trên summary
+Thường là do summary cũ chưa được update component mới.
+
+Chạy lại:
+```bash
+npm run register:commands
+npm run build
+pm2 restart taskbot
+```
+
+Sau đó trong Discord chạy lại:
+```text
+/setup
+```
+
+---
+
+## 11. Giới hạn hiện tại
 
 - backend hiện là SQLite, chưa phải DB multi-instance
+- chỉ nên chạy **1 instance bot**
 - chưa có Dockerfile chính thức
-- chưa có systemd service file đi kèm repo
 - chưa có backup automation
-- chưa có test/lint/CI hoàn chỉnh
-- `archive_channel` chưa tự auto-post task done
-- contributor claim/join vẫn phụ thuộc vào **tên role Discord** `Technician` và `Researcher`
+- chưa có CI/test suite hoàn chỉnh
+- `archive_channel` hiện mới là metadata/config, chưa auto-post task done vào đó
+- contributor claim/join vẫn phụ thuộc tên role Discord `Technician` và `Researcher`
+- file upload attachment vẫn cần command fallback `/task add-attachment`
 
-## Tài liệu liên quan
+---
 
-### Guides
-- [01. Thiết lập Discord Server](docs/guides/01-discord-server-setup.md)
-- [02. Cài đặt và sử dụng bot](docs/guides/02-bot-setup-and-daily-use.md)
-- [03. Hosting và vận hành](docs/guides/03-hosting-and-operations.md)
-- [04. Xử lý sự cố và khôi phục](docs/guides/04-troubleshooting-and-recovery.md)
-- [05. Command reference](docs/guides/05-command-reference.md)
-
-### Specs
-- [Discord UX & Workflow Spec](docs/specs/01-discord-ux-workflow.md)
-- [Data, Commands, and Permissions Spec](docs/specs/02-data-commands-permissions.md)
-- [MVP Code Plan](docs/specs/03-mvp-code-plan.md)
-
-## License / support
+## 12. License
 
 `package.json` hiện để `UNLICENSED`.
 
-Hãy coi repo này là dự án private/internal cho tới khi bạn chủ động đổi license và chính sách phát hành.
+Hãy coi repo này là private/internal cho tới khi bạn chủ động đổi license và chính sách phát hành.

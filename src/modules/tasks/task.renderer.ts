@@ -461,7 +461,7 @@ export function buildTaskCardEmbed(
       '',
       SECTION_DIVIDER,
       '',
-      'Use **Task Actions** below to open your private controls for this task.',
+      'Use the button below to open your private controls for this task.'
     ].join('\n'))
     .addFields(fields)
     .setFooter({
@@ -498,10 +498,24 @@ export function buildTaskCardComponents(
     );
   }
 
+  const actionLabel = (() => {
+    switch (task.status) {
+      case 'BACKLOG':
+        return 'Open Task';
+      case 'IN_PROGRESS':
+      case 'BLOCKED':
+        return 'Progress';
+      case 'REVIEW':
+        return 'Review';
+      case 'DONE':
+        return 'Results';
+    }
+  })();
+
   primaryRow.addComponents(
     new ButtonBuilder()
       .setCustomId(`task:actions:${task.id}`)
-      .setLabel('Task Actions')
+      .setLabel(actionLabel)
       .setEmoji('🧰')
       .setStyle(ButtonStyle.Secondary),
   );

@@ -282,6 +282,30 @@ async function finalizeTaskInteraction(options: {
   });
 }
 
+async function showTaskPanelReply(options: {
+  readonly interaction: RepliableInteraction;
+  readonly taskId: number;
+  readonly mode?: TaskPanelMode;
+  readonly notice?: string;
+}): Promise<void> {
+  const context = await resolveTaskContext(options.interaction as TaskInteraction, options.taskId);
+  if (!context) {
+    return;
+  }
+
+  const payload = buildTaskPanelPayload({
+    task: context.task,
+    guildConfig: context.guildConfig,
+    interaction: options.interaction as TaskInteraction,
+    mode: options.mode ?? 'overview',
+  });
+
+  await options.interaction.editReply({
+    content: options.notice ?? null,
+    ...payload,
+  });
+}
+
 function buildBlockModal(taskId: number): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`task:block-modal:${taskId}`)
@@ -328,6 +352,24 @@ export async function handleTaskButtonInteraction(
       return;
     case 'actions':
       await handleTaskActionsPanelInteraction(interaction, taskId);
+      return;
+    case 'edit-hub':
+      await handleTaskEditHubInteraction(interaction, taskId);
+      return;
+    case 'attachments':
+      await handleTaskAttachmentsPanelInteraction(interaction, taskId);
+      return;
+    case 'add-file':
+      await handleTaskAddFileGuideInteraction(interaction, taskId);
+      return;
+    case 'back-actions':
+      await handleTaskActionsPanelInteraction(interaction, taskId);
+      return;
+    case 'back-edit':
+      await handleTaskEditHubInteraction(interaction, taskId);
+      return;
+    case 'back-attachments':
+      await handleTaskAttachmentsPanelInteraction(interaction, taskId);
       return;
     case 'block':
       await handleBlockTaskPrompt(interaction, taskId);
@@ -553,8 +595,11 @@ async function handleClaimTaskInteraction(
     threadCreationFailed,
   });
 
-  await interaction.editReply({
-    content: threadCreationFailed
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: threadCreationFailed
       ? `You claimed **${updatedTask.taskCode}** and started the task team, but the workspace thread could not be created automatically.`
       : `You claimed **${updatedTask.taskCode}**. Workspace thread: ${threadChannelId ? `<#${threadChannelId}>` : 'Unavailable'}`,
   });
@@ -664,8 +709,11 @@ async function handleJoinTaskInteraction(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `You joined the team for **${updatedTask.taskCode}**.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `You joined the team for **${updatedTask.taskCode}**.`,
   });
 }
 
@@ -766,8 +814,11 @@ async function handleBlockTaskSubmit(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Marked **${updatedTask.taskCode}** as Blocked.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Marked **${updatedTask.taskCode}** as Blocked.`,
   });
 }
 
@@ -840,8 +891,11 @@ async function handleUnblockTaskInteraction(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Moved **${updatedTask.taskCode}** back to In Progress.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Moved **${updatedTask.taskCode}** back to In Progress.`,
   });
 }
 
@@ -916,8 +970,11 @@ async function handleRequestReviewInteraction(
     formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
   )}`;
 
-  await interaction.editReply({
-    content: `Moved **${updatedTask.taskCode}** to Review.${reviewerLine}`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Moved **${updatedTask.taskCode}** to Review.${reviewerLine}`,
   });
 }
 
@@ -990,8 +1047,11 @@ async function handleApproveTaskInteraction(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Approved **${updatedTask.taskCode}** and marked it Done.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Approved **${updatedTask.taskCode}** and marked it Done.`,
   });
 }
 
@@ -1064,8 +1124,11 @@ async function handleReturnTaskInteraction(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Returned **${updatedTask.taskCode}** to In Progress.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Returned **${updatedTask.taskCode}** to In Progress.`,
   });
 }
 
@@ -1149,8 +1212,11 @@ async function handleReopenTaskInteraction(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Reopened **${updatedTask.taskCode}** and moved it back to Backlog.`,
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'overview',
+    notice: `Reopened **${updatedTask.taskCode}** and moved it back to Backlog.`,
   });
 }
 
@@ -1180,15 +1246,24 @@ function canReviewFromInteraction(
   });
 }
 
-function buildTaskActionsPanelEmbed(options: {
+type TaskPanelMode = 'overview' | 'edit-hub' | 'attachments' | 'add-file-guide';
+
+type TaskActionPanelOptions = {
   readonly task: ResolvedTask;
   readonly guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>;
-  readonly interaction: ButtonInteraction;
-}): EmbedBuilder {
+  readonly interaction: TaskInteraction;
+};
+
+function getTaskActionAccess(options: TaskActionPanelOptions) {
   const { task, guildConfig, interaction } = options;
-  const manager = hasManagementAccessForInteraction(interaction, guildConfig);
-  const reviewer = canReviewFromInteraction(interaction, guildConfig);
-  const progressManager = canManageTaskProgress({
+  const canClaim = canClaimRequiredRole({
+    requiredRole: task.requiredRole,
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+  });
+  const canManageProgress = canManageTaskProgress({
     member: interaction.member,
     memberPermissions: interaction.memberPermissions,
     adminRoleId: guildConfig.adminRoleId,
@@ -1196,34 +1271,55 @@ function buildTaskActionsPanelEmbed(options: {
     task,
     userId: interaction.user.id,
   });
-  const claimAllowed = canClaimRequiredRole({
-    requiredRole: task.requiredRole,
-    member: interaction.member,
-    memberPermissions: interaction.memberPermissions,
-    adminRoleId: guildConfig.adminRoleId,
-    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
-  });
 
+  return {
+    manager: hasManagementAccessForInteraction(interaction, guildConfig),
+    reviewer: canReviewFromInteraction(interaction, guildConfig),
+    canClaim,
+    canManageProgress,
+  };
+}
+
+function buildTaskOverviewPanelEmbed(options: TaskActionPanelOptions): EmbedBuilder {
+  const { task, guildConfig } = options;
+  const access = getTaskActionAccess(options);
   const attachmentLines = task.attachments.length > 0
     ? task.attachments.slice(0, 8).map((attachment) => `#${attachment.id} • ${formatAttachmentLabel(attachment)}`)
     : ['No attachments yet.'];
 
+  const phaseLine = (() => {
+    switch (task.status) {
+      case 'BACKLOG':
+        return access.manager
+          ? 'This task is still in backlog. Managers can tune it before someone claims it.'
+          : 'This task is still in backlog and can be claimed if you have the required role.';
+      case 'IN_PROGRESS':
+        return 'This task is active. Progress controls update as the state changes.';
+      case 'BLOCKED':
+        return 'This task is blocked. Unblock it before work continues.';
+      case 'REVIEW':
+        return 'This task is waiting for review actions.';
+      case 'DONE':
+        return 'This task is completed. Review roles can reopen it if needed.';
+    }
+  })();
+
   return new EmbedBuilder()
-    .setTitle(`🧰 Task Actions • ${task.taskCode}`)
+    .setTitle(`🧰 ${task.taskCode} • ${task.title}`)
     .setColor(0x5865f2)
     .setDescription([
-      `**${task.title}**`,
-      `Status: ${task.status}`,
+      `Status: **${task.status}**`,
+      phaseLine,
+      '',
       `Your access: ${[
-        claimAllowed ? 'claim/join' : null,
-        progressManager ? 'progress actions' : null,
-        reviewer ? 'review actions' : null,
-        manager ? 'manager tools' : null,
+        access.canClaim ? 'claim/join' : null,
+        access.canManageProgress ? 'progress actions' : null,
+        access.reviewer ? 'review actions' : null,
+        access.manager ? 'manager edit tools' : null,
       ].filter(Boolean).join(', ') || 'view only'}`,
       '',
-      'Available actions below are private to you.',
-      manager ? 'For file uploads, keep using `/task add-attachment`.' : null,
-    ].filter(Boolean).join('\n'))
+      'The buttons below are private to you and should refresh as the task changes.',
+    ].join('\n'))
     .addFields(
       {
         name: 'Attachments',
@@ -1240,85 +1336,267 @@ function buildTaskActionsPanelEmbed(options: {
       },
     )
     .setFooter({
-      text: 'Buttons in this panel depend on your current permissions and the task state.',
+      text: 'Task buttons are shown according to task state and your permissions.',
     })
     .setTimestamp(task.updatedAt);
 }
 
-function buildTaskActionsPanelComponents(options: {
-  readonly task: ResolvedTask;
-  readonly guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>;
-  readonly interaction: ButtonInteraction;
-}): Array<ActionRowBuilder<ButtonBuilder>> {
-  const { task, guildConfig, interaction } = options;
+function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task, interaction } = options;
+  const access = getTaskActionAccess(options);
   const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
-  const canClaim = canClaimRequiredRole({
-    requiredRole: task.requiredRole,
-    member: interaction.member,
-    memberPermissions: interaction.memberPermissions,
-    adminRoleId: guildConfig.adminRoleId,
-    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
-  });
-  const progressManager = canManageTaskProgress({
-    member: interaction.member,
-    memberPermissions: interaction.memberPermissions,
-    adminRoleId: guildConfig.adminRoleId,
-    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
-    task,
-    userId: interaction.user.id,
-  });
-  const reviewer = canReviewFromInteraction(interaction, guildConfig);
-  const manager = hasManagementAccessForInteraction(interaction, guildConfig);
-
   const workflowRow = new ActionRowBuilder<ButtonBuilder>();
-  if (task.status === 'BACKLOG' && !task.assigneeDiscordUserId && !hasTaskTeam(task) && canClaim) {
+
+  if (task.status === 'BACKLOG' && !task.assigneeDiscordUserId && !hasTaskTeam(task) && access.canClaim) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:claim:${task.id}`).setLabel('Claim').setEmoji('✋').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`task:claim:${task.id}`)
+        .setLabel('Claim')
+        .setEmoji('✋')
+        .setStyle(ButtonStyle.Primary),
     );
   }
-  if ((task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task) && !hasTaskMember(task, interaction.user.id) && canClaim) {
+
+  if ((task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task) && !hasTaskMember(task, interaction.user.id) && access.canClaim) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:join:${task.id}`).setLabel('Join Task').setEmoji('🤝').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:join:${task.id}`)
+        .setLabel('Join Task')
+        .setEmoji('🤝')
+        .setStyle(ButtonStyle.Secondary),
     );
   }
-  if (task.status === 'IN_PROGRESS' && progressManager) {
+
+  if (task.status === 'IN_PROGRESS' && access.canManageProgress) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:block:${task.id}`).setLabel('Block').setEmoji('⛔').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`task:review:${task.id}`).setLabel('Done / Review').setEmoji('✅').setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`task:block:${task.id}`)
+        .setLabel('Block')
+        .setEmoji('⛔')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`task:review:${task.id}`)
+        .setLabel('Done / Review')
+        .setEmoji('✅')
+        .setStyle(ButtonStyle.Success),
     );
   }
-  if (task.status === 'BLOCKED' && progressManager) {
+
+  if (task.status === 'BLOCKED' && access.canManageProgress) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:unblock:${task.id}`).setLabel('Unblock').setEmoji('▶️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`task:unblock:${task.id}`)
+        .setLabel('Unblock')
+        .setEmoji('▶️')
+        .setStyle(ButtonStyle.Primary),
     );
   }
-  if (task.status === 'REVIEW' && reviewer) {
+
+  if (task.status === 'REVIEW' && access.reviewer) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:approve:${task.id}`).setLabel('Approve').setEmoji('✅').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`task:return:${task.id}`).setLabel('Request Changes').setEmoji('↩️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:approve:${task.id}`)
+        .setLabel('Approve')
+        .setEmoji('✅')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`task:return:${task.id}`)
+        .setLabel('Request Changes')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary),
     );
   }
-  if (task.status === 'DONE' && reviewer) {
+
+  if (task.status === 'DONE' && access.reviewer) {
     workflowRow.addComponents(
-      new ButtonBuilder().setCustomId(`task:reopen:${task.id}`).setLabel('Reopen').setEmoji('♻️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:reopen:${task.id}`)
+        .setLabel('Reopen')
+        .setEmoji('♻️')
+        .setStyle(ButtonStyle.Secondary),
     );
   }
+
   if (workflowRow.components.length > 0) {
     rows.push(workflowRow);
   }
 
-  if (manager) {
+  if (access.manager) {
     const managerRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`task:edit:${task.id}`).setLabel('Edit Details').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`task:${task.deadlineAt ? 'clear-deadline' : 'set-deadline'}:${task.id}`).setLabel(task.deadlineAt ? 'Clear Deadline' : 'Set Deadline').setEmoji(task.deadlineAt ? '🧹' : '⏰').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`task:add-link:${task.id}`).setLabel('Add Link').setEmoji('🔗').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`task:remove-attachment:${task.id}`).setLabel('Remove Attachment').setEmoji('🗑️').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`task:repair:${task.id}`).setLabel('Repair Task').setEmoji('🛠️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:edit-hub:${task.id}`)
+        .setLabel('Update Task')
+        .setStyle(ButtonStyle.Secondary),
     );
     rows.push(managerRow);
   }
 
   return rows;
+}
+
+function buildTaskEditHubEmbed(options: TaskActionPanelOptions): EmbedBuilder {
+  const { task } = options;
+
+  return new EmbedBuilder()
+    .setTitle(`Update Task • ${task.taskCode}`)
+    .setColor(0x5865f2)
+    .setDescription([
+      'Manager-only update hub.',
+      task.status === 'BACKLOG'
+        ? 'Use this before claim to tune the task cleanly.'
+        : 'Use this to maintain the task while the workflow continues.',
+      '',
+      'Everything here should refresh the task card and dashboard as soon as you save.',
+    ].join('\n'))
+    .setTimestamp(task.updatedAt);
+}
+
+function buildTaskEditHubComponents(options: TaskActionPanelOptions): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task } = options;
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:edit:${task.id}`)
+        .setLabel('Update Details')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:${task.deadlineAt ? 'clear-deadline' : 'set-deadline'}:${task.id}`)
+        .setLabel(task.deadlineAt ? 'Clear Deadline' : 'Update Deadline')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:attachments:${task.id}`)
+        .setLabel('Attachments')
+        .setEmoji('📎')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:repair:${task.id}`)
+        .setLabel('Repair Task')
+        .setEmoji('🛠️')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:back-actions:${task.id}`)
+        .setLabel('Back')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildTaskAttachmentsPanelEmbed(options: TaskActionPanelOptions): EmbedBuilder {
+  const { task } = options;
+  const attachmentLines = task.attachments.length > 0
+    ? task.attachments.slice(0, 12).map((attachment) => `#${attachment.id} • ${formatAttachmentLabel(attachment)}`)
+    : ['No attachments yet.'];
+
+  return new EmbedBuilder()
+    .setTitle(`📎 Attachments • ${task.taskCode}`)
+    .setColor(0x5865f2)
+    .setDescription([
+      'Choose how to manage attachments for this task.',
+      'URL attachments can be entered directly here.',
+      'File uploads keep the original filename that Discord provides — no intentional accent stripping or renaming.',
+    ].join('\n'))
+    .addFields({
+      name: 'Current attachments',
+      value: attachmentLines.join('\n'),
+      inline: false,
+    })
+    .setTimestamp(task.updatedAt);
+}
+
+function buildTaskAttachmentsPanelComponents(options: TaskActionPanelOptions): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task } = options;
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:add-link:${task.id}`)
+        .setLabel('Add URL')
+        .setEmoji('🔗')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:add-file:${task.id}`)
+        .setLabel('Add File')
+        .setEmoji('📤')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:remove-attachment:${task.id}`)
+        .setLabel('Remove Attachment')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:back-edit:${task.id}`)
+        .setLabel('Back')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildTaskAddFileGuideEmbed(options: TaskActionPanelOptions): EmbedBuilder {
+  const { task } = options;
+
+  return new EmbedBuilder()
+    .setTitle(`📤 Add File • ${task.taskCode}`)
+    .setColor(0x5865f2)
+    .setDescription([
+      'Discord still requires an upload step for files.',
+      '',
+      `1. Run the fallback command "/task add-attachment" for **${task.taskCode}**.`,
+      '2. Upload the file in that command.',
+      '3. Optional: add a note/label if needed.',
+      '',
+      'Limits follow Discord/server upload limits.',
+      'The bot stores the original filename exactly as Discord provides it and does not intentionally strip accents or rename it.',
+    ].join('\n'))
+    .setFooter({
+      text: 'After upload, reopen Attachments if you want to verify the saved file entry.',
+    })
+    .setTimestamp(task.updatedAt);
+}
+
+function buildTaskAddFileGuideComponents(options: TaskActionPanelOptions): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task } = options;
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:back-attachments:${task.id}`)
+        .setLabel('Back')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildTaskPanelPayload(options: TaskActionPanelOptions & { readonly mode: TaskPanelMode }) {
+  switch (options.mode) {
+    case 'edit-hub':
+      return {
+        embeds: [buildTaskEditHubEmbed(options)],
+        components: buildTaskEditHubComponents(options),
+      };
+    case 'attachments':
+      return {
+        embeds: [buildTaskAttachmentsPanelEmbed(options)],
+        components: buildTaskAttachmentsPanelComponents(options),
+      };
+    case 'add-file-guide':
+      return {
+        embeds: [buildTaskAddFileGuideEmbed(options)],
+        components: buildTaskAddFileGuideComponents(options),
+      };
+    case 'overview':
+      return {
+        embeds: [buildTaskOverviewPanelEmbed(options)],
+        components: buildTaskOverviewPanelComponents(options),
+      };
+  }
 }
 
 function buildCreateTaskModal(): ModalBuilder {
@@ -1441,7 +1719,7 @@ async function handleDashboardButtonInteraction(
 
       const embed = new EmbedBuilder()
         .setTitle('🛠️ Manager Console')
-        .setDescription('Use the buttons below to create tasks or repair the dashboard. Link/file attachment uploads stay on `/task add-attachment`.')
+        .setDescription('Use **Create Task** to add a new task. Use **Repair Dashboard** only when Discord messages/threads are out of sync. File attachment uploads stay on `/task add-attachment`.')
         .setColor(0x5865f2);
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('dashboard:create-task').setLabel('Create Task').setEmoji('➕').setStyle(ButtonStyle.Primary),
@@ -1536,16 +1814,64 @@ async function handleTaskActionsPanelInteraction(
   taskId: number,
 ): Promise<void> {
   await deferEphemeral(interaction);
+  await showTaskPanelReply({ interaction, taskId, mode: 'overview' });
+}
+
+async function handleTaskEditHubInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
 
   const context = await resolveTaskContext(interaction, taskId);
   if (!context) {
     return;
   }
 
-  await interaction.editReply({
-    embeds: [buildTaskActionsPanelEmbed({ task: context.task, guildConfig: context.guildConfig, interaction })],
-    components: buildTaskActionsPanelComponents({ task: context.task, guildConfig: context.guildConfig, interaction }),
-  });
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can update this task.' });
+    return;
+  }
+
+  await showTaskPanelReply({ interaction, taskId, mode: 'edit-hub' });
+}
+
+async function handleTaskAttachmentsPanelInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can manage attachments.' });
+    return;
+  }
+
+  await showTaskPanelReply({ interaction, taskId, mode: 'attachments' });
+}
+
+async function handleTaskAddFileGuideInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can add task files.' });
+    return;
+  }
+
+  await showTaskPanelReply({ interaction, taskId, mode: 'add-file-guide' });
 }
 
 async function handleEditTaskPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
@@ -1634,7 +1960,12 @@ async function handleClearDeadlineInteraction(interaction: ButtonInteraction, ta
     task: updatedTask,
   });
 
-  await interaction.editReply({ content: `Cleared the deadline for **${updatedTask.taskCode}**.` });
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit-hub',
+    notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+  });
 }
 
 async function handleRepairTaskInteraction(interaction: ButtonInteraction, taskId: number): Promise<void> {
@@ -1813,7 +2144,12 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
     task: updatedTask,
   });
 
-  await interaction.editReply({ content: `Updated **${updatedTask.taskCode}** metadata successfully.` });
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit-hub',
+    notice: `Updated **${updatedTask.taskCode}** metadata successfully.`,
+  });
 }
 
 async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
@@ -1852,7 +2188,12 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
     task: updatedTask,
   });
 
-  await interaction.editReply({ content: `Updated the deadline for **${updatedTask.taskCode}**.` });
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit-hub',
+    notice: `Updated the deadline for **${updatedTask.taskCode}**.`,
+  });
 }
 
 async function handleAddLinkModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
@@ -1899,7 +2240,12 @@ async function handleAddLinkModalSubmit(interaction: ModalSubmitInteraction, tas
     task: updatedTask,
   });
 
-  await interaction.editReply({ content: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${updatedTask.taskCode}**.` });
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'attachments',
+    notice: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${updatedTask.taskCode}**.`,
+  });
 }
 
 async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
@@ -1944,5 +2290,10 @@ async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInterac
     task: updatedTask,
   });
 
-  await interaction.editReply({ content: `Removed attachment #${removedAttachment.id} (${formatAttachmentLabel(removedAttachment)}) from **${updatedTask.taskCode}**.` });
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'attachments',
+    notice: `Removed attachment #${removedAttachment.id} (${formatAttachmentLabel(removedAttachment)}) from **${updatedTask.taskCode}**.`,
+  });
 }
