@@ -1,6 +1,9 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
+  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   TextInputBuilder,
@@ -11,6 +14,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 
+import { getDeadlineInputHint, parseDeadlineInput } from '../../lib/task-datetime.js';
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
 import { refreshDashboardSummary } from '../guild-config/guild-config.service.js';
@@ -32,6 +36,7 @@ import {
   canReviewTask,
   getManagerRoleIds,
   getReviewerRoleIds,
+  hasManagementAccess,
   isAdminOverride,
 } from './task.policy.js';
 import { buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
@@ -40,11 +45,19 @@ import {
   claimTask,
   clearTaskMembers,
   countActiveTasksForAssignee,
+  createTask,
+  createTaskAttachment,
+  createTaskEvent,
   createTaskStatusHistory,
+  findLatestTaskForGuild,
   findTaskByIdWithMembers,
+  listTasksByStatus,
+  listTasksForGuildWithMembers,
+  removeTaskAttachment,
   transitionTaskWithMembers,
   updateTaskWithMembers,
 } from './task.repository.js';
+import { syncTaskDashboard } from './task.sync.js';
 
 type TaskInteraction = ButtonInteraction | ModalSubmitInteraction;
 type ResolvedTask = NonNullable<Awaited<ReturnType<typeof findTaskByIdWithMembers>>>;
@@ -61,6 +74,82 @@ function formatRoleMentions(roleIds: readonly string[], fallback: string): strin
   return roleIds.length > 0
     ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
     : fallback;
+}
+
+function normalizeOptionalText(value: string | null): string | null {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseNextTaskSequence(taskCode: string | null): number {
+  if (!taskCode) {
+    return 1;
+  }
+
+  const match = /^TASK-(\d+)$/.exec(taskCode);
+  return match?.[1] ? Number.parseInt(match[1], 10) + 1 : 1;
+}
+
+function formatTaskCode(sequence: number): string {
+  return `TASK-${sequence.toString().padStart(3, '0')}`;
+}
+
+function parseRequiredRoleInput(value: string): 'ADMIN' | 'TECHNICIAN' | 'RESEARCHER' | null {
+  switch (value.trim().toUpperCase()) {
+    case 'ADMIN':
+      return 'ADMIN';
+    case 'TECHNICIAN':
+      return 'TECHNICIAN';
+    case 'RESEARCHER':
+      return 'RESEARCHER';
+    default:
+      return null;
+  }
+}
+
+function parsePriorityInput(value: string): 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | null {
+  switch (value.trim().toUpperCase()) {
+    case 'LOW':
+      return 'LOW';
+    case 'MEDIUM':
+      return 'MEDIUM';
+    case 'HIGH':
+      return 'HIGH';
+    case 'URGENT':
+      return 'URGENT';
+    default:
+      return null;
+  }
+}
+
+function parsePositiveIntegerInput(value: string): number | null {
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseAttachmentIdInput(value: string): number | null {
+  const match = /^#?(\d+)$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1]!, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatAttachmentLabel(options: {
+  readonly id: number;
+  readonly fileName?: string | null;
+  readonly label?: string | null;
+  readonly url: string;
+}): string {
+  const fileName = options.fileName?.trim();
+  const label = options.label?.trim();
+  if (fileName && label) {
+    return `${fileName} — ${label}`;
+  }
+
+  return fileName || label || options.url || `Attachment #${options.id}`;
 }
 
 async function sendInteractionMessage(
@@ -215,6 +304,11 @@ export async function handleTaskButtonInteraction(
 ): Promise<void> {
   const [namespace, action, taskIdPart] = interaction.customId.split(':');
 
+  if (namespace === 'dashboard') {
+    await handleDashboardButtonInteraction(interaction, action);
+    return;
+  }
+
   if (namespace !== 'task' || !action || !taskIdPart) {
     await interaction.reply({
       content: `Unsupported task action: ${interaction.customId}`,
@@ -231,6 +325,9 @@ export async function handleTaskButtonInteraction(
       return;
     case 'join':
       await handleJoinTaskInteraction(interaction, taskId);
+      return;
+    case 'actions':
+      await handleTaskActionsPanelInteraction(interaction, taskId);
       return;
     case 'block':
       await handleBlockTaskPrompt(interaction, taskId);
@@ -250,6 +347,24 @@ export async function handleTaskButtonInteraction(
     case 'reopen':
       await handleReopenTaskInteraction(interaction, taskId);
       return;
+    case 'edit':
+      await handleEditTaskPrompt(interaction, taskId);
+      return;
+    case 'set-deadline':
+      await handleSetDeadlinePrompt(interaction, taskId);
+      return;
+    case 'clear-deadline':
+      await handleClearDeadlineInteraction(interaction, taskId);
+      return;
+    case 'add-link':
+      await handleAddLinkPrompt(interaction, taskId);
+      return;
+    case 'remove-attachment':
+      await handleRemoveAttachmentPrompt(interaction, taskId);
+      return;
+    case 'repair':
+      await handleRepairTaskInteraction(interaction, taskId);
+      return;
     default:
       await interaction.reply({
         content: `Task action ${action} is not implemented yet.`,
@@ -263,7 +378,7 @@ export async function handleTaskModalSubmitInteraction(
 ): Promise<void> {
   const [namespace, action, taskIdPart] = interaction.customId.split(':');
 
-  if (namespace !== 'task' || action !== 'block-modal' || !taskIdPart) {
+  if (namespace !== 'task' || !action) {
     await interaction.reply({
       content: `Unsupported task modal: ${interaction.customId}`,
       flags: MessageFlags.Ephemeral,
@@ -271,7 +386,46 @@ export async function handleTaskModalSubmitInteraction(
     return;
   }
 
-  await handleBlockTaskSubmit(interaction, Number.parseInt(taskIdPart, 10));
+  switch (action) {
+    case 'block-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleBlockTaskSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+    case 'create-modal':
+      await handleCreateTaskModalSubmit(interaction);
+      return;
+    case 'edit-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleEditTaskModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+    case 'deadline-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleSetDeadlineModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+    case 'add-link-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleAddLinkModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+    case 'remove-attachment-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleRemoveAttachmentModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+  }
+
+  await interaction.reply({
+    content: `Unsupported task modal: ${interaction.customId}`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleClaimTaskInteraction(
@@ -375,7 +529,7 @@ async function handleClaimTaskInteraction(
         `⚠️ Workspace repair needed for **${claimedTask.taskCode}**.`,
         `Team: ${formatTaskTeamMentions(claimedTask)}`,
         'The task is in progress, but the workspace thread could not be created automatically.',
-        'Run `/task sync-dashboard` after fixing the channel/thread permissions.',
+        'Use the Manager Console / Repair Dashboard button after fixing the channel/thread permissions.',
       ].join('\n'),
     });
   }
@@ -998,4 +1152,797 @@ async function handleReopenTaskInteraction(
   await interaction.editReply({
     content: `Reopened **${updatedTask.taskCode}** and moved it back to Backlog.`,
   });
+}
+
+function hasManagementAccessForInteraction(
+  interaction: TaskInteraction | ButtonInteraction,
+  guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>,
+): boolean {
+  return hasManagementAccess({
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+  });
+}
+
+function canReviewFromInteraction(
+  interaction: TaskInteraction | ButtonInteraction,
+  guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>,
+): boolean {
+  return canReviewTask({
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+    reviewerRoleId: guildConfig.reviewerRoleId,
+    secondaryReviewerRoleId: guildConfig.secondaryReviewerRoleId,
+  });
+}
+
+function buildTaskActionsPanelEmbed(options: {
+  readonly task: ResolvedTask;
+  readonly guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>;
+  readonly interaction: ButtonInteraction;
+}): EmbedBuilder {
+  const { task, guildConfig, interaction } = options;
+  const manager = hasManagementAccessForInteraction(interaction, guildConfig);
+  const reviewer = canReviewFromInteraction(interaction, guildConfig);
+  const progressManager = canManageTaskProgress({
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+    task,
+    userId: interaction.user.id,
+  });
+  const claimAllowed = canClaimRequiredRole({
+    requiredRole: task.requiredRole,
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+  });
+
+  const attachmentLines = task.attachments.length > 0
+    ? task.attachments.slice(0, 8).map((attachment) => `#${attachment.id} • ${formatAttachmentLabel(attachment)}`)
+    : ['No attachments yet.'];
+
+  return new EmbedBuilder()
+    .setTitle(`🧰 Task Actions • ${task.taskCode}`)
+    .setColor(0x5865f2)
+    .setDescription([
+      `**${task.title}**`,
+      `Status: ${task.status}`,
+      `Your access: ${[
+        claimAllowed ? 'claim/join' : null,
+        progressManager ? 'progress actions' : null,
+        reviewer ? 'review actions' : null,
+        manager ? 'manager tools' : null,
+      ].filter(Boolean).join(', ') || 'view only'}`,
+      '',
+      'Available actions below are private to you.',
+      manager ? 'For file uploads, keep using `/task add-attachment`.' : null,
+    ].filter(Boolean).join('\n'))
+    .addFields(
+      {
+        name: 'Attachments',
+        value: attachmentLines.join('\n'),
+        inline: false,
+      },
+      {
+        name: 'Review roles',
+        value: formatRoleMentions(
+          getReviewerRoleIds(guildConfig),
+          formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
+        ),
+        inline: false,
+      },
+    )
+    .setFooter({
+      text: 'Buttons in this panel depend on your current permissions and the task state.',
+    })
+    .setTimestamp(task.updatedAt);
+}
+
+function buildTaskActionsPanelComponents(options: {
+  readonly task: ResolvedTask;
+  readonly guildConfig: NonNullable<Awaited<ReturnType<typeof findGuildConfigByGuildId>>>;
+  readonly interaction: ButtonInteraction;
+}): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task, guildConfig, interaction } = options;
+  const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
+  const canClaim = canClaimRequiredRole({
+    requiredRole: task.requiredRole,
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+  });
+  const progressManager = canManageTaskProgress({
+    member: interaction.member,
+    memberPermissions: interaction.memberPermissions,
+    adminRoleId: guildConfig.adminRoleId,
+    secondaryManagerRoleId: guildConfig.secondaryManagerRoleId,
+    task,
+    userId: interaction.user.id,
+  });
+  const reviewer = canReviewFromInteraction(interaction, guildConfig);
+  const manager = hasManagementAccessForInteraction(interaction, guildConfig);
+
+  const workflowRow = new ActionRowBuilder<ButtonBuilder>();
+  if (task.status === 'BACKLOG' && !task.assigneeDiscordUserId && !hasTaskTeam(task) && canClaim) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:claim:${task.id}`).setLabel('Claim').setEmoji('✋').setStyle(ButtonStyle.Primary),
+    );
+  }
+  if ((task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task) && !hasTaskMember(task, interaction.user.id) && canClaim) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:join:${task.id}`).setLabel('Join Task').setEmoji('🤝').setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (task.status === 'IN_PROGRESS' && progressManager) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:block:${task.id}`).setLabel('Block').setEmoji('⛔').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`task:review:${task.id}`).setLabel('Done / Review').setEmoji('✅').setStyle(ButtonStyle.Success),
+    );
+  }
+  if (task.status === 'BLOCKED' && progressManager) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:unblock:${task.id}`).setLabel('Unblock').setEmoji('▶️').setStyle(ButtonStyle.Primary),
+    );
+  }
+  if (task.status === 'REVIEW' && reviewer) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:approve:${task.id}`).setLabel('Approve').setEmoji('✅').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`task:return:${task.id}`).setLabel('Request Changes').setEmoji('↩️').setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (task.status === 'DONE' && reviewer) {
+    workflowRow.addComponents(
+      new ButtonBuilder().setCustomId(`task:reopen:${task.id}`).setLabel('Reopen').setEmoji('♻️').setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (workflowRow.components.length > 0) {
+    rows.push(workflowRow);
+  }
+
+  if (manager) {
+    const managerRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`task:edit:${task.id}`).setLabel('Edit Details').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`task:${task.deadlineAt ? 'clear-deadline' : 'set-deadline'}:${task.id}`).setLabel(task.deadlineAt ? 'Clear Deadline' : 'Set Deadline').setEmoji(task.deadlineAt ? '🧹' : '⏰').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`task:add-link:${task.id}`).setLabel('Add Link').setEmoji('🔗').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`task:remove-attachment:${task.id}`).setLabel('Remove Attachment').setEmoji('🗑️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`task:repair:${task.id}`).setLabel('Repair Task').setEmoji('🛠️').setStyle(ButtonStyle.Secondary),
+    );
+    rows.push(managerRow);
+  }
+
+  return rows;
+}
+
+function buildCreateTaskModal(): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId('task:create-modal')
+    .setTitle('Create task')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('title').setLabel('Title').setStyle(TextInputStyle.Short).setMaxLength(120).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('description').setLabel('Description').setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('required_role').setLabel('Required role (ADMIN / TECHNICIAN / RESEARCHER)').setStyle(TextInputStyle.Short).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('priority').setLabel('Priority (LOW / MEDIUM / HIGH / URGENT)').setStyle(TextInputStyle.Short).setRequired(false),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
+      ),
+    );
+}
+
+function buildEditTaskModal(task: ResolvedTask): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`task:edit-modal:${task.id}`)
+    .setTitle(`Edit ${task.taskCode}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('title').setLabel('Title').setStyle(TextInputStyle.Short).setValue(task.title).setMaxLength(120).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('description').setLabel('Description').setStyle(TextInputStyle.Paragraph).setValue(task.description).setMaxLength(4000).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('required_role').setLabel('Required role').setStyle(TextInputStyle.Short).setValue(task.requiredRole).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('priority').setLabel('Priority').setStyle(TextInputStyle.Short).setValue(task.priority).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue(String(task.targetMemberCount)).setRequired(true),
+      ),
+    );
+}
+
+function buildDeadlineModal(task: ResolvedTask): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`task:deadline-modal:${task.id}`)
+    .setTitle(`Set deadline • ${task.taskCode}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('deadline')
+          .setLabel('Deadline (dd/MM/yyyy HH:mm or ISO-8601)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+    );
+}
+
+function buildAddLinkModal(task: ResolvedTask): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`task:add-link-modal:${task.id}`)
+    .setTitle(`Add link • ${task.taskCode}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('url').setLabel('URL').setStyle(TextInputStyle.Short).setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('label').setLabel('Optional label').setStyle(TextInputStyle.Short).setRequired(false),
+      ),
+    );
+}
+
+function buildRemoveAttachmentModal(task: ResolvedTask): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`task:remove-attachment-modal:${task.id}`)
+    .setTitle(`Remove attachment • ${task.taskCode}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('attachment_id').setLabel('Attachment ID').setStyle(TextInputStyle.Short).setRequired(true),
+      ),
+    );
+}
+
+async function handleDashboardButtonInteraction(
+  interaction: ButtonInteraction,
+  action: string | undefined,
+): Promise<void> {
+  if (!interaction.inGuild() || !interaction.guild) {
+    await interaction.reply({ content: 'Dashboard actions are only available inside a server.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const guildConfig = await findGuildConfigByGuildId(interaction.guild.id);
+  if (!guildConfig) {
+    await interaction.reply({ content: 'TaskBot is not configured yet. Run /setup first.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  switch (action) {
+    case 'create-task': {
+      if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+        await interaction.reply({ content: 'Only configured manager roles can create tasks.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.showModal(buildCreateTaskModal());
+      return;
+    }
+    case 'manager-console': {
+      await deferEphemeral(interaction);
+      if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+        await interaction.editReply({ content: 'Only configured manager roles can open the manager console.' });
+        return;
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🛠️ Manager Console')
+        .setDescription('Use the buttons below to create tasks or repair the dashboard. Link/file attachment uploads stay on `/task add-attachment`.')
+        .setColor(0x5865f2);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('dashboard:create-task').setLabel('Create Task').setEmoji('➕').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('dashboard:repair-all').setLabel('Repair Dashboard').setEmoji('🛠️').setStyle(ButtonStyle.Secondary),
+      );
+
+      await interaction.editReply({ embeds: [embed], components: [row] });
+      return;
+    }
+    case 'repair-all': {
+      await deferEphemeral(interaction);
+      if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+        await interaction.editReply({ content: 'Only configured manager roles can repair the dashboard.' });
+        return;
+      }
+
+      const dashboardChannel = interaction.guild.channels.cache.get(guildConfig.dashboardChannelId)
+        ?? await interaction.guild.channels.fetch(guildConfig.dashboardChannelId).catch(() => null);
+      if (!isTextChannel(dashboardChannel)) {
+        await interaction.editReply({ content: 'The configured dashboard channel is unavailable or is not a text channel.' });
+        return;
+      }
+
+      const result = await syncTaskDashboard({
+        guild: interaction.guild,
+        guildConfig,
+        dashboardChannel,
+        refreshedByUserId: interaction.user.id,
+        taskCode: null,
+      });
+
+      await interaction.editReply({
+        content: [
+          `Dashboard sync completed for **${interaction.guild.name}**.`,
+          `Summary recreated: ${result.summaryRecreated ? 'Yes' : 'No'}`,
+          `Tasks processed: ${result.tasksProcessed}`,
+          `Task cards recreated: ${result.taskCardsRecreated}`,
+          `Threads recreated: ${result.threadsRecreated}`,
+        ].join('\n'),
+      });
+      return;
+    }
+    case 'review-queue': {
+      await deferEphemeral(interaction);
+      if (!canReviewFromInteraction(interaction, guildConfig)) {
+        await interaction.editReply({ content: 'Only configured manager or reviewer roles can open the review queue.' });
+        return;
+      }
+
+      const reviewTasks = await listTasksByStatus(interaction.guild.id, 'REVIEW');
+      const embed = new EmbedBuilder()
+        .setTitle('👀 Review Queue')
+        .setColor(0xfee75c)
+        .setDescription(
+          reviewTasks.length > 0
+            ? reviewTasks.slice(0, 15).map((task) => `- **${task.taskCode}** — ${task.title}`).join('\n')
+            : 'There are no tasks waiting for review right now.',
+        )
+        .setFooter({ text: 'Open a task card and use Task Actions to review a specific task.' });
+
+      await interaction.editReply({ embeds: [embed], components: [] });
+      return;
+    }
+    case 'my-tasks': {
+      await deferEphemeral(interaction);
+      const tasks = await listTasksForGuildWithMembers(interaction.guild.id);
+      const myTasks = tasks.filter((task) =>
+        ['IN_PROGRESS', 'BLOCKED', 'REVIEW'].includes(task.status)
+        && (task.assigneeDiscordUserId === interaction.user.id || hasTaskMember(task, interaction.user.id))
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle('📌 My Tasks')
+        .setColor(0x57f287)
+        .setDescription(
+          myTasks.length > 0
+            ? myTasks.slice(0, 15).map((task) => `- **${task.taskCode}** — ${task.title} (${task.status})`).join('\n')
+            : 'You do not have any active tasks right now.',
+        )
+        .setFooter({ text: 'Open a task card and use Task Actions for task-specific controls.' });
+
+      await interaction.editReply({ embeds: [embed], components: [] });
+      return;
+    }
+    default:
+      await interaction.reply({ content: `Unsupported dashboard action: ${interaction.customId}`, flags: MessageFlags.Ephemeral });
+  }
+}
+
+async function handleTaskActionsPanelInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [buildTaskActionsPanelEmbed({ task: context.task, guildConfig: context.guildConfig, interaction })],
+    components: buildTaskActionsPanelComponents({ task: context.task, guildConfig: context.guildConfig, interaction }),
+  });
+}
+
+async function handleEditTaskPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.reply({ content: 'Only configured manager roles can edit task details.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(buildEditTaskModal(context.task));
+}
+
+async function handleSetDeadlinePrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.reply({ content: 'Only configured manager roles can set task deadlines.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(buildDeadlineModal(context.task));
+}
+
+async function handleAddLinkPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.reply({ content: 'Only configured manager roles can add task links.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(buildAddLinkModal(context.task));
+}
+
+async function handleRemoveAttachmentPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.reply({ content: 'Only configured manager roles can remove attachments.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(buildRemoveAttachmentModal(context.task));
+}
+
+async function handleClearDeadlineInteraction(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can clear task deadlines.' });
+    return;
+  }
+
+  if (!task.deadlineAt) {
+    await interaction.editReply({ content: `**${task.taskCode}** does not have a deadline set.` });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt: null });
+  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'DEADLINE_CLEARED', summary: 'Manager cleared the task deadline.' });
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({ content: `Cleared the deadline for **${updatedTask.taskCode}**.` });
+}
+
+async function handleRepairTaskInteraction(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can repair task cards.' });
+    return;
+  }
+
+  const result = await syncTaskDashboard({
+    guild,
+    guildConfig,
+    dashboardChannel,
+    refreshedByUserId: interaction.user.id,
+    taskCode: task.taskCode,
+  });
+
+  await interaction.editReply({
+    content: [
+      `Repair completed for **${task.taskCode}**.`,
+      `Summary recreated: ${result.summaryRecreated ? 'Yes' : 'No'}`,
+      `Tasks processed: ${result.tasksProcessed}`,
+      `Task cards recreated: ${result.taskCardsRecreated}`,
+      `Threads recreated: ${result.threadsRecreated}`,
+    ].join('\n'),
+  });
+}
+
+async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+  await deferEphemeral(interaction);
+  if (!interaction.inGuild() || !interaction.guild) {
+    await interaction.editReply({ content: 'Task creation is only available inside a server.' });
+    return;
+  }
+
+  const guildConfig = await findGuildConfigByGuildId(interaction.guild.id);
+  if (!guildConfig) {
+    await interaction.editReply({ content: 'TaskBot is not configured yet. Run /setup first.' });
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can create tasks.' });
+    return;
+  }
+
+  const dashboardChannel = interaction.guild.channels.cache.get(guildConfig.dashboardChannelId)
+    ?? await interaction.guild.channels.fetch(guildConfig.dashboardChannelId).catch(() => null);
+  if (!isTextChannel(dashboardChannel)) {
+    await interaction.editReply({ content: 'The configured dashboard channel is unavailable or is not a text channel.' });
+    return;
+  }
+
+  const requiredRole = parseRequiredRoleInput(interaction.fields.getTextInputValue('required_role'));
+  if (!requiredRole) {
+    await interaction.editReply({ content: 'Required role must be ADMIN, TECHNICIAN, or RESEARCHER.' });
+    return;
+  }
+
+  const priorityInput = normalizeOptionalText(interaction.fields.getTextInputValue('priority'));
+  const priority = priorityInput ? parsePriorityInput(priorityInput) : null;
+  if (priorityInput && !priority) {
+    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
+    return;
+  }
+
+  const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
+  if (!teamSize || teamSize > 10) {
+    await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
+    return;
+  }
+
+  const latestTask = await findLatestTaskForGuild(interaction.guild.id);
+  const task = await createTask({
+    guildId: interaction.guild.id,
+    taskCode: formatTaskCode(parseNextTaskSequence(latestTask?.taskCode ?? null)),
+    title: interaction.fields.getTextInputValue('title').trim(),
+    description: interaction.fields.getTextInputValue('description').trim(),
+    requiredRole,
+    ...(priority ? { priority } : {}),
+    createdByDiscordUserId: interaction.user.id,
+    targetMemberCount: teamSize,
+  });
+
+  await createTaskStatusHistory({ taskId: task.id, actorDiscordUserId: interaction.user.id, toStatus: task.status, reason: 'Task created' });
+
+  const taskCardMessage = await dashboardChannel.send({
+    embeds: [buildTaskCardEmbed(task, { timezone: guildConfig.defaultTimezone })],
+    components: buildTaskCardComponents(task),
+  });
+
+  const persistedTask = await updateTaskWithMembers(task.id, {
+    taskMessageChannelId: dashboardChannel.id,
+    taskMessageId: taskCardMessage.id,
+  });
+
+  await refreshDashboardSummary({
+    guildId: interaction.guild.id,
+    guildName: interaction.guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+  });
+
+  await interaction.editReply({ content: `Created **${persistedTask.taskCode}** in <#${dashboardChannel.id}>.` });
+}
+
+async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can edit task details.' });
+    return;
+  }
+
+  const requiredRole = parseRequiredRoleInput(interaction.fields.getTextInputValue('required_role'));
+  if (!requiredRole) {
+    await interaction.editReply({ content: 'Required role must be ADMIN, TECHNICIAN, or RESEARCHER.' });
+    return;
+  }
+
+  const priority = parsePriorityInput(interaction.fields.getTextInputValue('priority'));
+  if (!priority) {
+    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
+    return;
+  }
+
+  const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
+  if (!teamSize || teamSize > 10) {
+    await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
+    return;
+  }
+
+  if (teamSize < task.members.length) {
+    await interaction.editReply({ content: `Team size cannot be smaller than the current member count (${task.members.length}).` });
+    return;
+  }
+
+  const title = interaction.fields.getTextInputValue('title').trim();
+  const description = interaction.fields.getTextInputValue('description').trim();
+
+  const updatedTask = await updateTaskWithMembers(task.id, {
+    title,
+    description,
+    requiredRole,
+    priority,
+    targetMemberCount: teamSize,
+  });
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'TASK_UPDATED',
+    summary: 'Manager updated task metadata.',
+    details: `Title: ${title} | Role: ${requiredRole} | Priority: ${priority} | Team size: ${teamSize}`,
+  });
+
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({ content: `Updated **${updatedTask.taskCode}** metadata successfully.` });
+}
+
+async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can set task deadlines.' });
+    return;
+  }
+
+  const deadlineInput = interaction.fields.getTextInputValue('deadline');
+  const deadlineAt = parseDeadlineInput(deadlineInput, {
+    timezone: guildConfig.defaultTimezone,
+    inputMode: guildConfig.defaultDateInputMode,
+  });
+
+  if (!deadlineAt) {
+    await interaction.editReply({ content: `Invalid deadline. ${getDeadlineInputHint(guildConfig.defaultDateInputMode)}` });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt });
+  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'DEADLINE_SET', summary: 'Manager set or updated the task deadline.', details: deadlineInput });
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({ content: `Updated the deadline for **${updatedTask.taskCode}**.` });
+}
+
+async function handleAddLinkModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can add task links.' });
+    return;
+  }
+
+  const url = interaction.fields.getTextInputValue('url').trim();
+  const label = normalizeOptionalText(interaction.fields.getTextInputValue('label'));
+  if (!/^https?:\/\//i.test(url)) {
+    await interaction.editReply({ content: 'Please provide a valid http/https URL.' });
+    return;
+  }
+
+  const attachment = await createTaskAttachment({
+    taskId: task.id,
+    label,
+    url,
+    addedByDiscordUserId: interaction.user.id,
+  });
+
+  const updatedTask = await findTaskByIdWithMembers(task.id);
+  if (!updatedTask) {
+    await interaction.editReply({ content: `The link was saved, but ${task.taskCode} could not be reloaded.` });
+    return;
+  }
+
+  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'ATTACHMENT_ADDED', summary: 'Manager added a task attachment.', details: `${attachment.id} • ${formatAttachmentLabel(attachment)}` });
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({ content: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${updatedTask.taskCode}**.` });
+}
+
+async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can remove attachments.' });
+    return;
+  }
+
+  const attachmentId = parseAttachmentIdInput(interaction.fields.getTextInputValue('attachment_id'));
+  if (!attachmentId) {
+    await interaction.editReply({ content: 'Attachment ID is invalid. Enter a numeric ID like 12 or #12.' });
+    return;
+  }
+
+  const removedAttachment = await removeTaskAttachment({ attachmentId, taskId: task.id });
+  if (!removedAttachment) {
+    await interaction.editReply({ content: `Could not find attachment #${attachmentId} on **${task.taskCode}**.` });
+    return;
+  }
+
+  const updatedTask = await findTaskByIdWithMembers(task.id);
+  if (!updatedTask) {
+    await interaction.editReply({ content: `Removed attachment #${attachmentId}, but ${task.taskCode} could not be reloaded.` });
+    return;
+  }
+
+  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'ATTACHMENT_REMOVED', summary: 'Manager removed a task attachment.', details: `${removedAttachment.id} • ${formatAttachmentLabel(removedAttachment)}` });
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await interaction.editReply({ content: `Removed attachment #${removedAttachment.id} (${formatAttachmentLabel(removedAttachment)}) from **${updatedTask.taskCode}**.` });
 }

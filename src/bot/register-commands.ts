@@ -94,192 +94,28 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName('task')
-    .setDescription('Create and manage TaskBot tasks.')
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('create')
-        .setDescription('Create a new backlog task on the dashboard.')
-        .addStringOption((option) =>
-          option.setName('title').setDescription('Short task title.').setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('description')
-            .setDescription('Full task description shown on the task card.')
-            .setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('required_role')
-            .setDescription('Which role should claim this task?')
-            .setRequired(true)
-            .addChoices(
-              { name: 'Admin', value: 'ADMIN' },
-              { name: 'Technician', value: 'TECHNICIAN' },
-              { name: 'Researcher', value: 'RESEARCHER' },
-            ),
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName('team_size')
-            .setDescription('How many people should this task have in total?')
-            .setMinValue(1)
-            .setMaxValue(10)
-            .setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('priority')
-            .setDescription('Optional task priority.')
-            .setRequired(false)
-            .addChoices(
-              { name: 'Low', value: 'LOW' },
-              { name: 'Medium', value: 'MEDIUM' },
-              { name: 'High', value: 'HIGH' },
-              { name: 'Urgent', value: 'URGENT' },
-            ),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('deadline')
-            .setDescription('Optional deadline in dd/MM/yyyy HH:mm or ISO-8601, e.g. 31/08/2026 18:00')
-            .setRequired(false),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('update-meta')
-        .setDescription('Manager-only update for title, description, role, priority, and team size.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true),
-        )
-        .addStringOption((option) =>
-          option.setName('title').setDescription('Updated task title.').setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('description')
-            .setDescription('Updated task description.')
-            .setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('required_role')
-            .setDescription('Updated required role.')
-            .setRequired(false)
-            .addChoices(
-              { name: 'Admin', value: 'ADMIN' },
-              { name: 'Technician', value: 'TECHNICIAN' },
-              { name: 'Researcher', value: 'RESEARCHER' },
-            ),
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName('team_size')
-            .setDescription('Updated team size.')
-            .setMinValue(1)
-            .setMaxValue(10)
-            .setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('priority')
-            .setDescription('Updated task priority.')
-            .setRequired(false)
-            .addChoices(
-              { name: 'Low', value: 'LOW' },
-              { name: 'Medium', value: 'MEDIUM' },
-              { name: 'High', value: 'HIGH' },
-              { name: 'Urgent', value: 'URGENT' },
-            ),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('set-deadline')
-        .setDescription('Manager-only set or replace a task deadline.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('deadline')
-            .setDescription('Deadline in dd/MM/yyyy HH:mm or ISO-8601.')
-            .setRequired(true),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('clear-deadline')
-        .setDescription('Manager-only clear a task deadline.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true),
-        ),
-    )
+    .setDescription('TaskBot fallback command for file attachment uploads only.')
     .addSubcommand((subcommand) =>
       subcommand
         .setName('add-attachment')
-        .setDescription('Manager-only add an attachment or reference link to a task.')
+        .setDescription('Manager-only fallback for uploading a file attachment to a task.')
         .addStringOption((option) =>
           option
             .setName('task_code')
             .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true),
+            .setRequired(true)
+            .setAutocomplete(true),
         )
         .addAttachmentOption((option) =>
           option
             .setName('file')
-            .setDescription('Optional file attachment to associate with the task.')
-            .setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('url')
-            .setDescription('Optional reference URL to attach when no file is uploaded.')
-            .setRequired(false),
+            .setDescription('File attachment to associate with the task.')
+            .setRequired(true),
         )
         .addStringOption((option) =>
           option
             .setName('label')
-            .setDescription('Optional short label for the attachment.')
-            .setRequired(false),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('remove-attachment')
-        .setDescription('Manager-only remove an attachment from a task.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true),
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName('attachment_id')
-            .setDescription('Attachment ID shown on the task card.')
-            .setMinValue(1)
-            .setRequired(true),
-        ),
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('sync-dashboard')
-        .setDescription('Repair dashboard summary, task cards, and workspace threads from database state.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Optional task code to repair, for example TASK-001.')
+            .setDescription('Optional note for the uploaded file.')
             .setRequired(false),
         ),
     ),

@@ -14,7 +14,10 @@ import {
   getReviewerRoleIds,
 } from '../tasks/task.policy.js';
 import { listTasksForDashboardSummary } from '../tasks/task.repository.js';
-import { buildDashboardSummaryEmbed } from '../tasks/task.renderer.js';
+import {
+  buildDashboardSummaryComponents,
+  buildDashboardSummaryEmbed,
+} from '../tasks/task.renderer.js';
 import {
   findGuildConfigByGuildId,
   upsertGuildConfig,
@@ -86,7 +89,10 @@ export async function refreshDashboardSummary(options: {
     tasks,
   });
 
-  await summaryMessage.edit({ embeds: [embed] });
+  await summaryMessage.edit({
+    embeds: [embed],
+    components: buildDashboardSummaryComponents(),
+  });
 }
 
 export async function handleSetupCommand(
@@ -194,7 +200,10 @@ export async function handleSetupCommand(
   }
 
   if (!summaryMessageId) {
-    const newSummaryMessage = await dashboardChannel.send({ embeds: [embed] });
+    const newSummaryMessage = await dashboardChannel.send({
+      embeds: [embed],
+      components: buildDashboardSummaryComponents(),
+    });
     summaryMessageId = newSummaryMessage.id;
   }
 

@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  escapeMarkdown,
 } from 'discord.js';
 import type { DateInputMode, RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/client';
 
@@ -82,6 +83,65 @@ function formatDateInputMode(inputMode: DateInputMode): string {
 
 function hasAttachments(task: TaskCardTask): task is TaskWithMembers {
   return 'attachments' in task && Array.isArray(task.attachments);
+}
+
+function formatAttachmentDisplayName(task: TaskWithMembers['attachments'][number]): string {
+  const fileName = task.fileName?.trim();
+  const label = task.label?.trim();
+
+  if (fileName) {
+    return fileName;
+  }
+
+  if (label) {
+    return label;
+  }
+
+  return `Attachment #${task.id}`;
+}
+
+function formatAttachmentLine(task: TaskWithMembers['attachments'][number]): string {
+  const fileName = task.fileName?.trim();
+  const label = task.label?.trim();
+  const parts = [`#${task.id}`, `**${escapeMarkdown(formatAttachmentDisplayName(task))}**`];
+
+  if (fileName && label) {
+    parts.push(`Note: ${escapeMarkdown(label)}`);
+  }
+
+  parts.push(`[Open](${task.url})`);
+  return parts.join(' • ');
+}
+
+function joinLinesWithFieldLimit(lines: readonly string[], maxLength = 1024): string {
+  const visibleLines: string[] = [];
+
+  for (const line of lines) {
+    const candidate = visibleLines.length === 0 ? line : `${visibleLines.join('\n')}\n${line}`;
+    if (candidate.length > maxLength) {
+      break;
+    }
+
+    visibleLines.push(line);
+  }
+
+  if (visibleLines.length === lines.length) {
+    return visibleLines.join('\n');
+  }
+
+  const remainingCount = lines.length - visibleLines.length;
+  const suffix = `…and ${remainingCount} more attachment${remainingCount === 1 ? '' : 's'}.`;
+  if (visibleLines.length === 0) {
+    return suffix;
+  }
+
+  const baseText = visibleLines.join('\n');
+  const suffixedText = `${baseText}\n${suffix}`;
+  if (suffixedText.length <= maxLength) {
+    return suffixedText;
+  }
+
+  return baseText.slice(0, maxLength - suffix.length - 1) + `\n${suffix}`;
 }
 
 function formatRequiredRole(role: RequiredRole): string {
@@ -259,7 +319,7 @@ export function buildDashboardSummaryEmbed(
         '',
         SECTION_DIVIDER,
         '',
-        'Detailed task cards are listed below.',
+        'Use the buttons below to open your private task controls.',
       ].join('\n'),
     )
     .addFields(
@@ -293,6 +353,33 @@ export function buildDashboardSummaryEmbed(
       text: 'TaskBot dashboard',
     })
     .setTimestamp();
+}
+
+export function buildDashboardSummaryComponents(): Array<ActionRowBuilder<ButtonBuilder>> {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('dashboard:my-tasks')
+        .setLabel('My Tasks')
+        .setEmoji('📌')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('dashboard:review-queue')
+        .setLabel('Review Queue')
+        .setEmoji('👀')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('dashboard:create-task')
+        .setLabel('Create Task')
+        .setEmoji('➕')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('dashboard:manager-console')
+        .setLabel('Manager Console')
+        .setEmoji('🛠️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
 }
 
 export function buildTaskCardEmbed(
@@ -344,12 +431,7 @@ export function buildTaskCardEmbed(
   if (hasAttachments(task) && task.attachments.length > 0) {
     fields.push({
       name: `Attachments (${task.attachments.length})`,
-      value: task.attachments
-        .map((attachment) => {
-          const label = attachment.label?.trim() || attachment.fileName?.trim() || `Attachment #${attachment.id}`;
-          return `#${attachment.id} • [${label}](${attachment.url})`;
-        })
-        .join('\n'),
+      value: joinLinesWithFieldLimit(task.attachments.map((attachment) => formatAttachmentLine(attachment))),
       inline: false,
     });
   }
@@ -379,7 +461,7 @@ export function buildTaskCardEmbed(
       '',
       SECTION_DIVIDER,
       '',
-      'Use manager update commands when this task needs richer context, attachments, or a new deadline.',
+      'Use **Task Actions** below to open your private controls for this task.',
     ].join('\n'))
     .addFields(fields)
     .setFooter({
@@ -396,81 +478,33 @@ export function buildTaskCardComponents(
   const workspaceButton = buildWorkspaceButton(task);
   const canJoin = (task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task);
 
-  switch (task.status) {
-    case 'BACKLOG':
-      primaryRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:claim:${task.id}`)
-          .setLabel('Claim')
-          .setEmoji('✋')
-          .setStyle(ButtonStyle.Primary),
-      );
-      break;
-    case 'IN_PROGRESS':
-      if (canJoin) {
-        primaryRow.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`task:join:${task.id}`)
-            .setLabel('Join Task')
-            .setEmoji('🤝')
-            .setStyle(ButtonStyle.Secondary),
-        );
-      }
-      primaryRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:block:${task.id}`)
-          .setLabel('Block')
-          .setEmoji('⛔')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId(`task:review:${task.id}`)
-          .setLabel('Done / Review')
-          .setEmoji('✅')
-          .setStyle(ButtonStyle.Success),
-      );
-      break;
-    case 'BLOCKED':
-      if (canJoin) {
-        primaryRow.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`task:join:${task.id}`)
-            .setLabel('Join Task')
-            .setEmoji('🤝')
-            .setStyle(ButtonStyle.Secondary),
-        );
-      }
-      primaryRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:unblock:${task.id}`)
-          .setLabel('Unblock')
-          .setEmoji('▶️')
-          .setStyle(ButtonStyle.Primary),
-      );
-      break;
-    case 'REVIEW':
-      primaryRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:approve:${task.id}`)
-          .setLabel('Approve')
-          .setEmoji('✅')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`task:return:${task.id}`)
-          .setLabel('Request Changes')
-          .setEmoji('↩️')
-          .setStyle(ButtonStyle.Secondary),
-      );
-      break;
-    case 'DONE':
-      primaryRow.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:reopen:${task.id}`)
-          .setLabel('Reopen')
-          .setEmoji('♻️')
-          .setStyle(ButtonStyle.Secondary),
-      );
-      break;
+  if (task.status === 'BACKLOG') {
+    primaryRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:claim:${task.id}`)
+        .setLabel('Claim')
+        .setEmoji('✋')
+        .setStyle(ButtonStyle.Primary),
+    );
   }
+
+  if (canJoin) {
+    primaryRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:join:${task.id}`)
+        .setLabel('Join Task')
+        .setEmoji('🤝')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+
+  primaryRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`task:actions:${task.id}`)
+      .setLabel('Task Actions')
+      .setEmoji('🧰')
+      .setStyle(ButtonStyle.Secondary),
+  );
 
   const rows = primaryRow.components.length > 0 ? [primaryRow] : [];
 

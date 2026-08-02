@@ -2,11 +2,12 @@ import {
   ChannelType,
   MessageFlags,
   type Attachment,
+  type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type Guild,
   type TextChannel,
 } from 'discord.js';
-import type { GuildConfig, RequiredRole, TaskPriority } from '@prisma/client';
+import type { GuildConfig, RequiredRole, TaskAttachment, TaskPriority, TaskStatus } from '@prisma/client';
 
 import {
   getDeadlineInputHint,
@@ -24,6 +25,7 @@ import {
   createTaskStatusHistory,
   findLatestTaskForGuild,
   findTaskByCodeWithMembers,
+  listTasksForGuild,
   removeTaskAttachment,
   updateTaskWithMembers,
 } from './task.repository.js';
@@ -90,6 +92,47 @@ function normalizeTaskCodeInput(value: string | null): string | null {
 function normalizeOptionalText(value: string | null): string | null {
   const trimmed = value?.trim() ?? '';
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function formatTaskStatusLabel(status: TaskStatus): string {
+  switch (status) {
+    case 'BACKLOG':
+      return 'Backlog';
+    case 'IN_PROGRESS':
+      return 'In Progress';
+    case 'BLOCKED':
+      return 'Blocked';
+    case 'REVIEW':
+      return 'Review';
+    case 'DONE':
+      return 'Done';
+  }
+}
+
+function truncateChoiceLabel(value: string, maxLength = 100): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+function formatAttachmentTargetLabel(attachment: TaskAttachment): string {
+  const fileName = attachment.fileName?.trim();
+  const label = attachment.label?.trim();
+
+  if (fileName && label) {
+    return `${fileName} — ${label}`;
+  }
+
+  return fileName || label || attachment.url;
+}
+
+function parseAttachmentIdInput(value: string | null): number | null {
+  const trimmed = value?.trim() ?? '';
+  const match = /^#?(\d+)$/.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1]!, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function getAttachmentUrl(file: Attachment | null, url: string | null): string | null {
@@ -214,6 +257,77 @@ async function resolveTaskForManagerCommand(options: {
   }
 
   return { taskCode, task };
+}
+
+export async function handleTaskAutocompleteInteraction(
+  interaction: AutocompleteInteraction,
+): Promise<void> {
+  if (!interaction.inGuild()) {
+    await interaction.respond([]);
+    return;
+  }
+
+  const focusedOption = interaction.options.getFocused(true);
+  if (focusedOption.name === 'task_code') {
+    const query = String(focusedOption.value ?? '').trim().toLowerCase();
+    const tasks = (await listTasksForGuild(interaction.guildId)).reverse();
+    const filteredTasks = tasks
+      .filter((task) => {
+        if (query.length === 0) {
+          return true;
+        }
+
+        return task.taskCode.toLowerCase().includes(query) || task.title.toLowerCase().includes(query);
+      })
+      .slice(0, 25)
+      .map((task) => ({
+        name: truncateChoiceLabel(`${task.taskCode} • ${task.title} • ${formatTaskStatusLabel(task.status)}`),
+        value: task.taskCode,
+      }));
+
+    await interaction.respond(filteredTasks);
+    return;
+  }
+
+  if (focusedOption.name === 'attachment_id') {
+    const taskCode = normalizeTaskCodeInput(interaction.options.getString('task_code', false));
+    if (!taskCode) {
+      await interaction.respond([]);
+      return;
+    }
+
+    const task = await findTaskByCodeWithMembers(interaction.guildId, taskCode);
+    if (!task) {
+      await interaction.respond([]);
+      return;
+    }
+
+    const query = String(focusedOption.value ?? '').trim().toLowerCase();
+    const choices = [...task.attachments]
+      .reverse()
+      .filter((attachment) => {
+        if (query.length === 0) {
+          return true;
+        }
+
+        return [
+          attachment.id.toString(),
+          attachment.fileName ?? '',
+          attachment.label ?? '',
+          attachment.url,
+        ].some((value) => value.toLowerCase().includes(query));
+      })
+      .slice(0, 25)
+      .map((attachment) => ({
+        name: truncateChoiceLabel(`#${attachment.id} • ${formatAttachmentTargetLabel(attachment)}`),
+        value: attachment.id.toString(),
+      }));
+
+    await interaction.respond(choices);
+    return;
+  }
+
+  await interaction.respond([]);
 }
 
 export async function handleTaskCommand(
@@ -584,7 +698,7 @@ async function handleTaskAddAttachmentCommand(
     actorDiscordUserId: interaction.user.id,
     type: 'ATTACHMENT_ADDED',
     summary: 'Manager added a task attachment.',
-    details: `${attachment.id} • ${attachment.label ?? attachment.fileName ?? attachment.url}`,
+    details: `${attachment.id} • ${formatAttachmentTargetLabel(attachment)}`,
   });
 
   await refreshTaskPresentation({
@@ -596,7 +710,7 @@ async function handleTaskAddAttachmentCommand(
   });
 
   await interaction.editReply({
-    content: `Added attachment #${attachment.id} to **${updatedTask.taskCode}**.`,
+    content: `Added attachment #${attachment.id} (${formatAttachmentTargetLabel(attachment)}) to **${updatedTask.taskCode}**.`,
   });
 }
 
@@ -620,7 +734,15 @@ async function handleTaskRemoveAttachmentCommand(
     return;
   }
 
-  const attachmentId = interaction.options.getInteger('attachment_id', true);
+  const attachmentIdInput = interaction.options.getString('attachment_id', true);
+  const attachmentId = parseAttachmentIdInput(attachmentIdInput);
+  if (!attachmentId) {
+    await interaction.editReply({
+      content: 'Attachment ID is invalid. Pick one from the list or enter a numeric ID like 12 or #12.',
+    });
+    return;
+  }
+
   const removedAttachment = await removeTaskAttachment({
     attachmentId,
     taskId: resolvedTask.task.id,
@@ -646,7 +768,7 @@ async function handleTaskRemoveAttachmentCommand(
     actorDiscordUserId: interaction.user.id,
     type: 'ATTACHMENT_REMOVED',
     summary: 'Manager removed a task attachment.',
-    details: `${removedAttachment.id} • ${removedAttachment.label ?? removedAttachment.fileName ?? removedAttachment.url}`,
+    details: `${removedAttachment.id} • ${formatAttachmentTargetLabel(removedAttachment)}`,
   });
 
   await refreshTaskPresentation({
@@ -658,7 +780,7 @@ async function handleTaskRemoveAttachmentCommand(
   });
 
   await interaction.editReply({
-    content: `Removed attachment #${removedAttachment.id} from **${updatedTask.taskCode}**.`,
+    content: `Removed attachment #${removedAttachment.id} (${formatAttachmentTargetLabel(removedAttachment)}) from **${updatedTask.taskCode}**.`,
   });
 }
 

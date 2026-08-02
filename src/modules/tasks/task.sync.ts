@@ -9,7 +9,12 @@ import {
   getManagerRoleIds,
   getReviewerRoleIds,
 } from './task.policy.js';
-import { buildDashboardSummaryEmbed, buildTaskCardComponents, buildTaskCardEmbed } from './task.renderer.js';
+import {
+  buildDashboardSummaryComponents,
+  buildDashboardSummaryEmbed,
+  buildTaskCardComponents,
+  buildTaskCardEmbed,
+} from './task.renderer.js';
 import { sendTaskFeedMessage } from './task.feed.js';
 import {
   findTaskByCodeWithMembers,
@@ -82,11 +87,17 @@ async function syncSummaryMessage(options: {
     : null;
 
   if (existingSummaryMessage) {
-    await existingSummaryMessage.edit({ embeds: [embed] });
+    await existingSummaryMessage.edit({
+      embeds: [embed],
+      components: buildDashboardSummaryComponents(),
+    });
     return { recreated: false };
   }
 
-  const createdSummaryMessage = await options.dashboardChannel.send({ embeds: [embed] });
+  const createdSummaryMessage = await options.dashboardChannel.send({
+    embeds: [embed],
+    components: buildDashboardSummaryComponents(),
+  });
   await updateGuildConfig(options.guild.id, {
     dashboardSummaryMessageId: createdSummaryMessage.id,
   });
