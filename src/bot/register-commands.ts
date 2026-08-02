@@ -1,10 +1,6 @@
 import { ChannelType, REST, Routes, SlashCommandBuilder } from 'discord.js';
 
 import { requireDiscordCredentials } from '../config/env.js';
-import {
-  DATE_INPUT_MODE_CHOICES,
-  SUPPORTED_TIMEZONE_CHOICES,
-} from '../lib/task-datetime.js';
 
 const commands = [
   new SlashCommandBuilder()
@@ -78,20 +74,6 @@ const commands = [
         )
         .setRequired(false),
     )
-    .addStringOption((option) =>
-      option
-        .setName('default_timezone')
-        .setDescription('Default timezone used when a deadline input has no offset.')
-        .addChoices(...SUPPORTED_TIMEZONE_CHOICES)
-        .setRequired(false),
-    )
-    .addStringOption((option) =>
-      option
-        .setName('default_date_input_mode')
-        .setDescription('Accepted date input format for task deadlines.')
-        .addChoices(...DATE_INPUT_MODE_CHOICES)
-        .setRequired(false),
-    ),
 ].map((command) => command.toJSON());
 
 async function main(): Promise<void> {

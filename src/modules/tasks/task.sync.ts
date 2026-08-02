@@ -138,7 +138,6 @@ export async function syncTaskCardMessage(options: {
   readonly task: TaskWithMembers;
   readonly guild: Guild;
   readonly guildConfig: GuildConfig;
-  readonly timezone: string;
 }): Promise<{ task: TaskWithMembers; recreated: boolean; moved: boolean }> {
   const targetChannel = await resolveTaskCardChannel(options);
   const existingTaskMessage = await fetchExistingTaskCardMessage({
@@ -150,7 +149,7 @@ export async function syncTaskCardMessage(options: {
   if (existingTaskMessage && !existingTaskMessage.deleteIfMoved) {
     const message = await targetChannel.messages.fetch(existingTaskMessage.messageId);
     await message.edit({
-      embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
+      embeds: [buildTaskCardEmbed(options.task)],
       components: buildTaskCardComponents(options.task),
     });
 
@@ -169,7 +168,7 @@ export async function syncTaskCardMessage(options: {
   }
 
   const createdTaskMessage = await targetChannel.send({
-    embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
+    embeds: [buildTaskCardEmbed(options.task)],
     components: buildTaskCardComponents(options.task),
   });
 
@@ -206,8 +205,6 @@ async function syncSummaryMessage(options: {
     archiveChannelId: options.guildConfig.archiveChannelId,
     maxActiveTasksPerUser: options.guildConfig.maxActiveTasksPerUser,
     defaultThreadAutoArchiveMinutes: options.guildConfig.defaultThreadAutoArchiveMinutes,
-    defaultTimezone: options.guildConfig.defaultTimezone,
-    defaultDateInputMode: options.guildConfig.defaultDateInputMode,
     tasks,
   });
 
@@ -241,7 +238,6 @@ async function syncTaskWorkspace(options: {
   readonly guild: Guild;
   readonly dashboardChannel: TextChannel;
   readonly autoArchiveMinutes: number;
-  readonly timezone: string;
 }): Promise<{
   task: TaskWithMembers;
   recreated: boolean;
@@ -286,7 +282,6 @@ async function syncTaskWorkspace(options: {
     task,
     dashboardChannel: options.dashboardChannel,
     autoArchiveMinutes: options.autoArchiveMinutes,
-    timezone: options.timezone,
   });
 
   task = await updateTaskWithMembers(task.id, {
@@ -334,7 +329,6 @@ export async function syncTaskDashboard(
         guild: input.guild,
         dashboardChannel: input.dashboardChannel,
         autoArchiveMinutes: input.guildConfig.defaultThreadAutoArchiveMinutes,
-        timezone: input.guildConfig.defaultTimezone,
       });
       task = workspaceResult.task;
 
@@ -366,7 +360,6 @@ export async function syncTaskDashboard(
         task,
         guild: input.guild,
         guildConfig: input.guildConfig,
-        timezone: input.guildConfig.defaultTimezone,
       });
       task = cardResult.task;
       taskCardsUpdated += 1;

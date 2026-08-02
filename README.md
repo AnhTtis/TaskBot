@@ -91,18 +91,20 @@ Manager bấm `Create Task` để mở modal tạo task cơ bản:
 - title
 - description
 - required role
-- priority
 - team size
+- deadline *(optional)*
 
 ### Bước 2: Edit Task ngay sau khi tạo
-Do Discord modal chỉ có tối đa 5 field, bot sẽ tạo task xong rồi **mở ngay panel `Edit Task`** để manager có thể làm tiếp mà không phải mở console khác:
-- set / update / clear deadline
-- add URL attachment
+Sau khi tạo xong, bot **mở ngay panel `Edit Task`** để manager có thể làm tiếp mà không phải mở console khác:
+- edit details *(bao gồm priority nếu cần chỉnh)*
+- deadline
+- add link attachment
 - add file attachment
-- remove attachment
-- edit details nếu cần chỉnh lại metadata
+- quản lý attachment hiện có bằng nút:
+  - `⚙️` để edit
+  - `✖️` để delete
 
-Vì vậy create flow vẫn bao gồm deadline + attachment, chỉ tách thành bước 2 ngay sau khi task được tạo.
+Vì vậy create flow hiện bao gồm deadline ngay từ đầu và attachment ngay sau khi tạo.
 
 ---
 
@@ -153,11 +155,12 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
   - `Remove Attachment`
 
 ### `IN_PROGRESS`
-- task member / manager có thể:
+- người làm task sẽ thấy nút `Done`
+- manager/admin sẽ thấy:
+  - `Edit Task`
   - `Block`
-  - `Done / Review`
 - người khác nếu đủ role và còn slot có thể `Join Task`
-- manager vẫn có `Edit Task`
+- khi người làm bấm `Done`, task chuyển sang `REVIEW`
 
 ### `BLOCKED`
 - task member / manager có thể `Unblock`
@@ -168,6 +171,7 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
   - `Approve`
   - `Request Changes`
 - manager vẫn có `Edit Task` nếu cần chỉnh metadata/deadline/attachment
+- trạng thái này thường xuất hiện sau khi người làm bấm `Done`
 
 ### `DONE`
 - reviewer / manager có thể `Reopen`
@@ -310,11 +314,11 @@ Sau khi bot vào server, chạy:
 - `secondary_reviewer_role` *(optional)*
 - `max_active_tasks`
 - `thread_auto_archive_minutes`
-- `default_timezone`
-- `default_date_input_mode`
 
 ### Kết quả sau `/setup`
 - bot lưu config vào DB
+- bot luôn dùng giờ Việt Nam `GMT+7`
+- bot luôn nhận deadline theo format `dd/MM/yyyy HH:mm`
 - bot tạo/update summary dashboard
 - summary dashboard sẽ có các nút:
   - `My Tasks`
@@ -513,6 +517,11 @@ Thường do một trong các nguyên nhân sau:
 - upload sai channel
 - bot chưa có `Message Content Intent`
 - bot thiếu quyền xem/gửi message ở thread/channel đó
+
+### Deadline chuẩn hiện tại
+- toàn bộ bot dùng **giờ Việt Nam (GMT+7)**
+- nhập deadline theo đúng format: `dd/MM/yyyy HH:mm`
+- ví dụ: `08/12/2026 00:00`
 
 ---
 

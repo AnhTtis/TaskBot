@@ -199,6 +199,34 @@ export async function createTaskAttachment(
   });
 }
 
+export async function updateTaskAttachment(options: {
+  readonly attachmentId: number;
+  readonly taskId: number;
+  readonly url?: string;
+  readonly label?: string | null;
+}): Promise<TaskAttachment | null> {
+  return prisma.$transaction(async (tx) => {
+    const attachment = await tx.taskAttachment.findFirst({
+      where: {
+        id: options.attachmentId,
+        taskId: options.taskId,
+      },
+    });
+
+    if (!attachment) {
+      return null;
+    }
+
+    return tx.taskAttachment.update({
+      where: { id: attachment.id },
+      data: {
+        ...(options.url !== undefined ? { url: options.url } : {}),
+        ...(options.label !== undefined ? { label: options.label } : {}),
+      },
+    });
+  });
+}
+
 export async function removeTaskAttachment(options: {
   readonly attachmentId: number;
   readonly taskId: number;

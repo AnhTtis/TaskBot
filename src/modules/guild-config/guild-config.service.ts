@@ -6,7 +6,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 
-import type { DateInputMode, GuildConfig } from '@prisma/client';
+import type { GuildConfig } from '@prisma/client';
 
 import { logger } from '../../lib/logger.js';
 import {
@@ -35,17 +35,6 @@ function formatConfiguredRoleMentions(roleIds: readonly string[], fallback: stri
   return roleIds.length > 0
     ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
     : fallback;
-}
-
-function formatDateInputModeLabel(inputMode: DateInputMode): string {
-  switch (inputMode) {
-    case 'ISO_ONLY':
-      return 'ISO only';
-    case 'VIETNAM_ONLY':
-      return 'Việt Nam only';
-    case 'VIETNAM_OR_ISO':
-      return 'Việt Nam + ISO';
-  }
 }
 
 export async function refreshDashboardSummary(options: {
@@ -84,8 +73,6 @@ export async function refreshDashboardSummary(options: {
     archiveChannelId: guildConfig.archiveChannelId,
     maxActiveTasksPerUser: guildConfig.maxActiveTasksPerUser,
     defaultThreadAutoArchiveMinutes: guildConfig.defaultThreadAutoArchiveMinutes,
-    defaultTimezone: guildConfig.defaultTimezone,
-    defaultDateInputMode: guildConfig.defaultDateInputMode,
     tasks,
   });
 
@@ -134,10 +121,6 @@ export async function handleSetupCommand(
   const maxActiveTasks = interaction.options.getInteger('max_active_tasks', false) ?? 2;
   const defaultThreadAutoArchiveMinutes =
     interaction.options.getInteger('thread_auto_archive_minutes', false) ?? 1440;
-  const defaultTimezone = interaction.options.getString('default_timezone', false) ?? 'Asia/Ho_Chi_Minh';
-  const defaultDateInputMode = (
-    interaction.options.getString('default_date_input_mode', false) ?? 'VIETNAM_OR_ISO'
-  ) as DateInputMode;
 
   if (!isGuildTextChannel(dashboardChannel) || !isGuildTextChannel(feedChannel)) {
     await interaction.reply({
@@ -176,8 +159,6 @@ export async function handleSetupCommand(
     archiveChannelId: archiveChannel?.id ?? null,
     maxActiveTasksPerUser: maxActiveTasks,
     defaultThreadAutoArchiveMinutes,
-    defaultTimezone,
-    defaultDateInputMode,
     tasks,
   });
 
@@ -221,8 +202,6 @@ export async function handleSetupCommand(
     secondaryReviewerRoleId: secondaryReviewerRole?.id ?? null,
     maxActiveTasksPerUser: maxActiveTasks,
     defaultThreadAutoArchiveMinutes,
-    defaultTimezone,
-    defaultDateInputMode,
   });
 
   logger.info('Guild setup completed', {
@@ -232,8 +211,6 @@ export async function handleSetupCommand(
     archiveChannelId: archiveChannel?.id ?? null,
     managerRoleIds,
     reviewerRoleIds,
-    defaultTimezone,
-    defaultDateInputMode,
     summaryMessageId,
     reusedExistingSummary,
   });
@@ -246,8 +223,7 @@ export async function handleSetupCommand(
       `Archive channel: ${archiveChannel ? `<#${archiveChannel.id}>` : 'Not set'}`,
       `Manager roles: ${formatConfiguredRoleMentions(managerRoleIds, 'Not set')}`,
       `Reviewer roles: ${formatConfiguredRoleMentions(reviewerRoleIds, 'Managers only')}`,
-      `Default timezone: ${defaultTimezone}`,
-      `Deadline input: ${formatDateInputModeLabel(defaultDateInputMode)}`,
+      'Deadline format: dd/MM/yyyy HH:mm (GMT+7)',
       reusedExistingSummary
         ? 'The existing dashboard summary message was updated.'
         : 'A new dashboard summary message was created.',

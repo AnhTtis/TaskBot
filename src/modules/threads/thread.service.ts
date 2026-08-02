@@ -51,7 +51,6 @@ export async function createTaskThread(options: {
   readonly task: ThreadTask;
   readonly dashboardChannel: TextChannel;
   readonly autoArchiveMinutes: number;
-  readonly timezone?: string;
 }): Promise<PublicThreadChannel<boolean>> {
   if (!options.task.taskMessageId) {
     throw new Error(`Task ${options.task.id} is missing taskMessageId; cannot create thread.`);
@@ -75,7 +74,7 @@ export async function createTaskThread(options: {
       `Team: ${formatTaskTeamSummary(options.task)}`,
       `Status: ${formatThreadStatus(options.task.status)}`,
       `Priority: ${options.task.priority}`,
-      `Deadline: ${formatDeadlineForDisplay(options.task.deadlineAt ?? null, options.timezone ?? 'Asia/Ho_Chi_Minh')}`,
+      `Deadline: ${formatDeadlineForDisplay(options.task.deadlineAt ?? null)}`,
       '',
       options.task.description,
     ].join('\n'),

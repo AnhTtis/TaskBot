@@ -5,7 +5,7 @@ import {
   EmbedBuilder,
   escapeMarkdown,
 } from 'discord.js';
-import type { DateInputMode, RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/client';
+import type { RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/client';
 
 import { formatDeadlineForDisplay } from '../../lib/task-datetime.js';
 
@@ -32,16 +32,11 @@ type BuildDashboardSummaryEmbedInput = {
   readonly archiveChannelId: string | null;
   readonly maxActiveTasksPerUser: number;
   readonly defaultThreadAutoArchiveMinutes: number;
-  readonly defaultTimezone: string;
-  readonly defaultDateInputMode: DateInputMode;
   readonly tasks: readonly DashboardSummaryTask[];
 };
 
 type TaskCardTask = Task | TaskWithMembers;
 
-type TaskCardRenderOptions = {
-  readonly timezone?: string;
-};
 
 const SECTION_DIVIDER = '────────────────────────';
 
@@ -68,17 +63,6 @@ function formatRoleMentions(roleIds: readonly string[], fallback: string): strin
   return roleIds.length > 0
     ? roleIds.map((roleId) => `<@&${roleId}>`).join(', ')
     : fallback;
-}
-
-function formatDateInputMode(inputMode: DateInputMode): string {
-  switch (inputMode) {
-    case 'ISO_ONLY':
-      return 'ISO only';
-    case 'VIETNAM_ONLY':
-      return 'Việt Nam only';
-    case 'VIETNAM_OR_ISO':
-      return 'Việt Nam + ISO';
-  }
 }
 
 function hasAttachments(task: TaskCardTask): task is TaskWithMembers {
@@ -343,8 +327,7 @@ export function buildDashboardSummaryEmbed(
           `Archive: ${input.archiveChannelId ? `<#${input.archiveChannelId}>` : 'Not set'}`,
           `Max active tasks: ${input.maxActiveTasksPerUser}`,
           `Thread auto-archive: ${formatThreadArchiveLabel(input.defaultThreadAutoArchiveMinutes)}`,
-          `Default timezone: ${input.defaultTimezone}`,
-          `Deadline input: ${formatDateInputMode(input.defaultDateInputMode)}`,
+          'Deadline format: dd/MM/yyyy HH:mm (GMT+7)',
         ]),
         inline: false,
       },
@@ -384,10 +367,8 @@ export function buildDashboardSummaryComponents(): Array<ActionRowBuilder<Button
 
 export function buildTaskCardEmbed(
   task: TaskCardTask,
-  options: TaskCardRenderOptions = {},
 ): EmbedBuilder {
   const remainingSlots = getTaskRemainingSlots(task);
-  const timezone = options.timezone ?? 'Asia/Ho_Chi_Minh';
   const fields = [
     {
       name: 'Status',
@@ -423,7 +404,7 @@ export function buildTaskCardEmbed(
     },
     {
       name: 'Deadline',
-      value: formatDeadlineForDisplay(task.deadlineAt ?? null, timezone),
+      value: formatDeadlineForDisplay(task.deadlineAt ?? null),
       inline: true,
     },
   ];

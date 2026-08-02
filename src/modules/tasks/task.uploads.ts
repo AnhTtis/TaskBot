@@ -162,7 +162,6 @@ export async function handlePendingTaskFileUpload(message: Message): Promise<voi
       task: updatedTask,
       guild: message.guild,
       guildConfig,
-      timezone: guildConfig.defaultTimezone,
     });
     await refreshDashboardSummary({
       guildId: message.guildId,

@@ -14,7 +14,11 @@ import {
   type TextChannel,
 } from 'discord.js';
 
-import { getDeadlineInputHint, parseDeadlineInput } from '../../lib/task-datetime.js';
+import {
+  formatDeadlineForInput,
+  getDeadlineInputHint,
+  parseDeadlineInput,
+} from '../../lib/task-datetime.js';
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
 import { refreshDashboardSummary } from '../guild-config/guild-config.service.js';
@@ -54,6 +58,7 @@ import {
   listTasksForGuildWithMembers,
   removeTaskAttachment,
   transitionTaskWithMembers,
+  updateTaskAttachment,
   updateTaskWithMembers,
 } from './task.repository.js';
 import { syncTaskCardMessage, syncTaskDashboard } from './task.sync.js';
@@ -180,6 +185,14 @@ async function deferEphemeral(interaction: RepliableInteraction): Promise<void> 
     return;
   }
 
+  if (
+    interaction.isButton()
+    && interaction.message.flags.has(MessageFlags.Ephemeral)
+  ) {
+    await interaction.deferUpdate();
+    return;
+  }
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 }
 
@@ -248,7 +261,6 @@ async function finalizeTaskInteraction(options: {
     task: options.task,
     guild: options.dashboardChannel.guild,
     guildConfig: options.guildConfig,
-    timezone: options.guildConfig.defaultTimezone,
   });
 
   await refreshDashboardSummary({
@@ -304,7 +316,7 @@ function buildBlockModal(taskId: number): ModalBuilder {
 export async function handleTaskButtonInteraction(
   interaction: ButtonInteraction,
 ): Promise<void> {
-  const [namespace, action, taskIdPart] = interaction.customId.split(':');
+  const [namespace, action, taskIdPart, attachmentIdPart] = interaction.customId.split(':');
 
   if (namespace === 'dashboard') {
     await handleDashboardButtonInteraction(interaction, action);
@@ -320,6 +332,7 @@ export async function handleTaskButtonInteraction(
   }
 
   const taskId = Number.parseInt(taskIdPart, 10);
+  const attachmentId = attachmentIdPart ? Number.parseInt(attachmentIdPart, 10) : null;
 
   switch (action) {
     case 'claim':
@@ -370,8 +383,17 @@ export async function handleTaskButtonInteraction(
     case 'add-url':
       await handleAddLinkPrompt(interaction, taskId);
       return;
-    case 'remove-attachment':
-      await handleRemoveAttachmentPrompt(interaction, taskId);
+    case 'attachment-edit':
+      if (!attachmentId) {
+        break;
+      }
+      await handleEditAttachmentPrompt(interaction, taskId, attachmentId);
+      return;
+    case 'attachment-delete':
+      if (!attachmentId) {
+        break;
+      }
+      await handleDeleteAttachmentInteraction(interaction, taskId, attachmentId);
       return;
     default:
       await interaction.reply({
@@ -384,7 +406,7 @@ export async function handleTaskButtonInteraction(
 export async function handleTaskModalSubmitInteraction(
   interaction: ModalSubmitInteraction,
 ): Promise<void> {
-  const [namespace, action, taskIdPart] = interaction.customId.split(':');
+  const [namespace, action, taskIdPart, attachmentIdPart] = interaction.customId.split(':');
 
   if (namespace !== 'task' || !action) {
     await interaction.reply({
@@ -422,11 +444,15 @@ export async function handleTaskModalSubmitInteraction(
       }
       await handleAddLinkModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
       return;
-    case 'remove-attachment-modal':
-      if (!taskIdPart) {
+    case 'attachment-edit-modal':
+      if (!taskIdPart || !attachmentIdPart) {
         break;
       }
-      await handleRemoveAttachmentModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      await handleEditAttachmentModalSubmit(
+        interaction,
+        Number.parseInt(taskIdPart, 10),
+        Number.parseInt(attachmentIdPart, 10),
+      );
       return;
   }
 
@@ -514,7 +540,6 @@ async function handleClaimTaskInteraction(
         task: updatedTask,
         dashboardChannel,
         autoArchiveMinutes: guildConfig.defaultThreadAutoArchiveMinutes,
-        timezone: guildConfig.defaultTimezone,
       });
       threadChannelId = createdThread.id;
     }
@@ -1316,6 +1341,7 @@ function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Arra
   const access = getTaskActionAccess(options);
   const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
   const workflowRow = new ActionRowBuilder<ButtonBuilder>();
+  const isTaskMember = hasTaskMember(task, interaction.user.id);
 
   if (task.status === 'BACKLOG' && !task.assigneeDiscordUserId && !hasTaskTeam(task) && access.canClaim) {
     workflowRow.addComponents(
@@ -1327,7 +1353,7 @@ function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Arra
     );
   }
 
-  if ((task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task) && !hasTaskMember(task, interaction.user.id) && access.canClaim) {
+  if ((task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task) && !isTaskMember && access.canClaim) {
     workflowRow.addComponents(
       new ButtonBuilder()
         .setCustomId(`task:join:${task.id}`)
@@ -1337,19 +1363,24 @@ function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Arra
     );
   }
 
-  if (task.status === 'IN_PROGRESS' && access.canManageProgress) {
-    workflowRow.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`task:block:${task.id}`)
-        .setLabel('Block')
-        .setEmoji('⛔')
-        .setStyle(ButtonStyle.Danger),
-      new ButtonBuilder()
-        .setCustomId(`task:review:${task.id}`)
-        .setLabel('Done / Review')
-        .setEmoji('✅')
-        .setStyle(ButtonStyle.Success),
-    );
+  if (task.status === 'IN_PROGRESS') {
+    if (access.manager) {
+      workflowRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`task:block:${task.id}`)
+          .setLabel('Block')
+          .setEmoji('⛔')
+          .setStyle(ButtonStyle.Danger),
+      );
+    } else if (access.canManageProgress) {
+      workflowRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`task:review:${task.id}`)
+          .setLabel('Done')
+          .setEmoji('✅')
+          .setStyle(ButtonStyle.Success),
+      );
+    }
   }
 
   if (task.status === 'BLOCKED' && access.canManageProgress) {
@@ -1392,13 +1423,15 @@ function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Arra
   }
 
   if (access.manager) {
-    const managerRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`task:edit-task:${task.id}`)
-        .setLabel('Edit Task')
-        .setStyle(ButtonStyle.Secondary),
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`task:edit-task:${task.id}`)
+          .setLabel('Edit Task')
+          .setEmoji('⚙️')
+          .setStyle(ButtonStyle.Secondary),
+      ),
     );
-    rows.push(managerRow);
   }
 
   return rows;
@@ -1418,9 +1451,9 @@ function buildTaskEditPanelEmbed(options: TaskActionPanelOptions): EmbedBuilder 
         ? 'Manager-only task editor for pre-claim tuning.'
         : 'Manager-only task editor for live task maintenance.',
       '',
-      'Use this panel to edit details, adjust deadlines, add URLs, remove attachments, or arm the next file upload.',
+      'Use the controls below to edit details, update the deadline, add links/files, and manage existing attachments.',
+      'Attachment rows use ⚙️ to edit and ✖️ to delete.',
       'When you press **Add File**, upload the next file message in the task workspace or dashboard within 10 minutes.',
-      'The uploaded filename is kept exactly as Discord provides it.',
     ].join('\n'))
     .addFields({
       name: 'Current attachments',
@@ -1430,34 +1463,57 @@ function buildTaskEditPanelEmbed(options: TaskActionPanelOptions): EmbedBuilder 
     .setTimestamp(task.updatedAt);
 }
 
+function buildAttachmentActionRows(task: ResolvedTask): Array<ActionRowBuilder<ButtonBuilder>> {
+  const attachmentPairs = task.attachments.slice(0, 4);
+  const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
+
+  for (let index = 0; index < attachmentPairs.length; index += 2) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+
+    for (const attachment of attachmentPairs.slice(index, index + 2)) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`task:attachment-edit:${task.id}:${attachment.id}`)
+          .setLabel(`#${attachment.id}`)
+          .setEmoji('⚙️')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`task:attachment-delete:${task.id}:${attachment.id}`)
+          .setLabel(`#${attachment.id}`)
+          .setEmoji('✖️')
+          .setStyle(ButtonStyle.Danger),
+      );
+    }
+
+    rows.push(row);
+  }
+
+  return rows;
+}
+
 function buildTaskEditPanelComponents(options: TaskActionPanelOptions): Array<ActionRowBuilder<ButtonBuilder>> {
   const { task } = options;
   const rows: Array<ActionRowBuilder<ButtonBuilder>> = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`task:edit-details:${task.id}`)
-        .setLabel('Edit Details')
+        .setLabel('Details')
+        .setEmoji('⚙️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`task:set-deadline:${task.id}`)
-        .setLabel(task.deadlineAt ? 'Update Deadline' : 'Set Deadline')
+        .setLabel('Deadline')
+        .setEmoji('🗓️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`task:add-url:${task.id}`)
-        .setLabel('Add URL')
+        .setLabel('Link')
         .setEmoji('🔗')
         .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`task:add-file:${task.id}`)
         .setLabel('Add File')
         .setEmoji('📤')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`task:remove-attachment:${task.id}`)
-        .setLabel('Remove Attachment')
-        .setEmoji('🗑️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`task:back-actions:${task.id}`)
@@ -1467,16 +1523,7 @@ function buildTaskEditPanelComponents(options: TaskActionPanelOptions): Array<Ac
     ),
   ];
 
-  if (task.deadlineAt) {
-    rows.splice(1, 0, new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`task:clear-deadline:${task.id}`)
-        .setLabel('Clear Deadline')
-        .setStyle(ButtonStyle.Secondary),
-    ));
-  }
-
-  return rows;
+  return [...rows, ...buildAttachmentActionRows(task)];
 }
 
 function buildTaskPanelPayload(options: TaskActionPanelOptions & { readonly mode: TaskPanelMode }) {
@@ -1514,15 +1561,15 @@ function buildCreateTaskModal(): ModalBuilder {
           .setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('priority')
-          .setLabel('Priority')
-          .setPlaceholder('LOW / MEDIUM / HIGH / URGENT')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false),
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
+        new TextInputBuilder()
+          .setCustomId('deadline')
+          .setLabel('Deadline (optional)')
+          .setPlaceholder('dd/MM/yyyy HH:mm')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
       ),
     );
 }
@@ -1553,14 +1600,16 @@ function buildEditTaskModal(task: ResolvedTask): ModalBuilder {
 function buildDeadlineModal(task: ResolvedTask): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`task:deadline-modal:${task.id}`)
-    .setTitle(`Set deadline • ${task.taskCode}`)
+    .setTitle(`Deadline • ${task.taskCode}`)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId('deadline')
-          .setLabel('Deadline (dd/MM/yyyy HH:mm or ISO-8601)')
+          .setLabel('Deadline (dd/MM/yyyy HH:mm)')
+          .setPlaceholder('Leave blank to clear')
+          .setValue(formatDeadlineForInput(task.deadlineAt ?? null))
           .setStyle(TextInputStyle.Short)
-          .setRequired(true),
+          .setRequired(false),
       ),
     );
 }
@@ -1579,13 +1628,47 @@ function buildAddLinkModal(task: ResolvedTask): ModalBuilder {
     );
 }
 
-function buildRemoveAttachmentModal(task: ResolvedTask): ModalBuilder {
+function buildEditAttachmentModal(task: ResolvedTask, attachmentId: number): ModalBuilder | null {
+  const attachment = task.attachments.find((item) => item.id === attachmentId);
+  if (!attachment) {
+    return null;
+  }
+
+  if (attachment.fileName) {
+    return new ModalBuilder()
+      .setCustomId(`task:attachment-edit-modal:${task.id}:${attachment.id}`)
+      .setTitle(`Edit file • ${task.taskCode}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('label')
+            .setLabel('File note')
+            .setStyle(TextInputStyle.Short)
+            .setValue(attachment.label ?? '')
+            .setRequired(false),
+        ),
+      );
+  }
+
   return new ModalBuilder()
-    .setCustomId(`task:remove-attachment-modal:${task.id}`)
-    .setTitle(`Remove attachment • ${task.taskCode}`)
+    .setCustomId(`task:attachment-edit-modal:${task.id}:${attachment.id}`)
+    .setTitle(`Edit link • ${task.taskCode}`)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('attachment_id').setLabel('Attachment ID').setStyle(TextInputStyle.Short).setRequired(true),
+        new TextInputBuilder()
+          .setCustomId('url')
+          .setLabel('URL')
+          .setStyle(TextInputStyle.Short)
+          .setValue(attachment.url)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('label')
+          .setLabel('Optional label')
+          .setStyle(TextInputStyle.Short)
+          .setValue(attachment.label ?? '')
+          .setRequired(false),
       ),
     );
 }
@@ -1802,18 +1885,83 @@ async function handleAddLinkPrompt(interaction: ButtonInteraction, taskId: numbe
   await interaction.showModal(buildAddLinkModal(context.task));
 }
 
-async function handleRemoveAttachmentPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+async function handleEditAttachmentPrompt(
+  interaction: ButtonInteraction,
+  taskId: number,
+  attachmentId: number,
+): Promise<void> {
   const context = await resolveTaskContext(interaction, taskId);
   if (!context) {
     return;
   }
 
   if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
-    await interaction.reply({ content: 'Only configured manager roles can remove attachments.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'Only configured manager roles can edit attachments.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.showModal(buildRemoveAttachmentModal(context.task));
+  const modal = buildEditAttachmentModal(context.task, attachmentId);
+  if (!modal) {
+    await interaction.reply({ content: `Attachment #${attachmentId} could not be found on this task.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(modal);
+}
+
+async function handleDeleteAttachmentInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+  attachmentId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can delete attachments.' });
+    return;
+  }
+
+  const removedAttachment = await removeTaskAttachment({ attachmentId, taskId: task.id });
+  if (!removedAttachment) {
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${task.taskCode}**.` });
+    return;
+  }
+
+  const updatedTask = await findTaskByIdWithMembers(task.id);
+  if (!updatedTask) {
+    await interaction.editReply({ content: `Attachment #${attachmentId} was deleted, but ${task.taskCode} could not be reloaded.` });
+    return;
+  }
+
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'ATTACHMENT_REMOVED',
+    summary: 'Manager removed a task attachment.',
+    details: `${removedAttachment.id} • ${formatAttachmentLabel(removedAttachment)}`,
+  });
+
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit',
+    notice: `Deleted attachment #${removedAttachment.id} from **${updatedTask.taskCode}**.`,
+  });
 }
 
 async function handleClearDeadlineInteraction(interaction: ButtonInteraction, taskId: number): Promise<void> {
@@ -1885,16 +2033,16 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     return;
   }
 
-  const priorityInput = normalizeOptionalText(interaction.fields.getTextInputValue('priority'));
-  const priority = priorityInput ? parsePriorityInput(priorityInput) : null;
-  if (priorityInput && !priority) {
-    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
-    return;
-  }
-
   const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
   if (!teamSize || teamSize > 10) {
     await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
+    return;
+  }
+
+  const deadlineInput = normalizeOptionalText(interaction.fields.getTextInputValue('deadline'));
+  const deadlineAt = deadlineInput ? parseDeadlineInput(deadlineInput) : null;
+  if (deadlineInput && !deadlineAt) {
+    await interaction.editReply({ content: `Invalid deadline. ${getDeadlineInputHint()}` });
     return;
   }
 
@@ -1905,8 +2053,8 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     title: interaction.fields.getTextInputValue('title').trim(),
     description: interaction.fields.getTextInputValue('description').trim(),
     requiredRole,
-    ...(priority ? { priority } : {}),
     createdByDiscordUserId: interaction.user.id,
+    deadlineAt,
     targetMemberCount: teamSize,
   });
 
@@ -1922,7 +2070,6 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     task: createdTask,
     guild: interaction.guild,
     guildConfig,
-    timezone: guildConfig.defaultTimezone,
   });
 
   await refreshDashboardSummary({
@@ -2027,14 +2174,32 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
     return;
   }
 
-  const deadlineInput = interaction.fields.getTextInputValue('deadline');
-  const deadlineAt = parseDeadlineInput(deadlineInput, {
-    timezone: guildConfig.defaultTimezone,
-    inputMode: guildConfig.defaultDateInputMode,
-  });
+  const deadlineInput = normalizeOptionalText(interaction.fields.getTextInputValue('deadline'));
+  if (!deadlineInput) {
+    const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt: null });
+    await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'DEADLINE_CLEARED', summary: 'Manager cleared the task deadline.' });
+    await finalizeTaskInteraction({
+      interaction,
+      guildId: guild.id,
+      guildName: guild.name,
+      refreshedByUserId: interaction.user.id,
+      dashboardChannel,
+      guildConfig,
+      task: updatedTask,
+    });
 
+    await showTaskPanelReply({
+      interaction,
+      taskId: updatedTask.id,
+      mode: 'edit',
+      notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+    });
+    return;
+  }
+
+  const deadlineAt = parseDeadlineInput(deadlineInput);
   if (!deadlineAt) {
-    await interaction.editReply({ content: `Invalid deadline. ${getDeadlineInputHint(guildConfig.defaultDateInputMode)}` });
+    await interaction.editReply({ content: `Invalid deadline. ${getDeadlineInputHint()}` });
     return;
   }
 
@@ -2110,7 +2275,11 @@ async function handleAddLinkModalSubmit(interaction: ModalSubmitInteraction, tas
   });
 }
 
-async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
+async function handleEditAttachmentModalSubmit(
+  interaction: ModalSubmitInteraction,
+  taskId: number,
+  attachmentId: number,
+): Promise<void> {
   await deferEphemeral(interaction);
   const context = await resolveTaskContext(interaction, taskId);
   if (!context) {
@@ -2119,29 +2288,51 @@ async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInterac
 
   const { guild, guildConfig, task, dashboardChannel } = context;
   if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
-    await interaction.editReply({ content: 'Only configured manager roles can remove attachments.' });
+    await interaction.editReply({ content: 'Only configured manager roles can edit attachments.' });
     return;
   }
 
-  const attachmentId = parseAttachmentIdInput(interaction.fields.getTextInputValue('attachment_id'));
-  if (!attachmentId) {
-    await interaction.editReply({ content: 'Attachment ID is invalid. Enter a numeric ID like 12 or #12.' });
+  const currentAttachment = task.attachments.find((item) => item.id === attachmentId);
+  if (!currentAttachment) {
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${task.taskCode}**.` });
     return;
   }
 
-  const removedAttachment = await removeTaskAttachment({ attachmentId, taskId: task.id });
-  if (!removedAttachment) {
-    await interaction.editReply({ content: `Could not find attachment #${attachmentId} on **${task.taskCode}**.` });
+  const label = normalizeOptionalText(interaction.fields.getTextInputValue('label'));
+  const nextUrl = currentAttachment.fileName
+    ? undefined
+    : interaction.fields.getTextInputValue('url').trim();
+
+  if (nextUrl !== undefined && !/^https?:\/\//i.test(nextUrl)) {
+    await interaction.editReply({ content: 'Please provide a valid http/https URL.' });
+    return;
+  }
+
+  const updatedAttachment = await updateTaskAttachment({
+    attachmentId,
+    taskId: task.id,
+    ...(nextUrl !== undefined ? { url: nextUrl } : {}),
+    label,
+  });
+
+  if (!updatedAttachment) {
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be updated on **${task.taskCode}**.` });
     return;
   }
 
   const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `Removed attachment #${attachmentId}, but ${task.taskCode} could not be reloaded.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} was updated, but ${task.taskCode} could not be reloaded.` });
     return;
   }
 
-  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'ATTACHMENT_REMOVED', summary: 'Manager removed a task attachment.', details: `${removedAttachment.id} • ${formatAttachmentLabel(removedAttachment)}` });
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'ATTACHMENT_ADDED',
+    summary: 'Manager edited a task attachment.',
+    details: `${updatedAttachment.id} • ${formatAttachmentLabel(updatedAttachment)}`,
+  });
   await finalizeTaskInteraction({
     interaction,
     guildId: guild.id,
@@ -2156,6 +2347,6 @@ async function handleRemoveAttachmentModalSubmit(interaction: ModalSubmitInterac
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Removed attachment #${removedAttachment.id} (${formatAttachmentLabel(removedAttachment)}) from **${updatedTask.taskCode}**.`,
+    notice: `Updated attachment #${updatedAttachment.id} on **${updatedTask.taskCode}**.`,
   });
 }
