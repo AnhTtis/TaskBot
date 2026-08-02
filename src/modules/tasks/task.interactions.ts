@@ -67,6 +67,8 @@ import { armTaskFileUpload } from './task.uploads.js';
 type TaskInteraction = ButtonInteraction | ModalSubmitInteraction;
 type ResolvedTask = NonNullable<Awaited<ReturnType<typeof findTaskByIdWithMembers>>>;
 
+const lastPrivateTaskPanelByUser = new Map<string, string>();
+
 function isTextChannel(channel: unknown): channel is TextChannel {
   return (
     typeof channel === 'object' &&
@@ -84,6 +86,14 @@ function formatRoleMentions(roleIds: readonly string[], fallback: string): strin
 function normalizeOptionalText(value: string | null): string | null {
   const trimmed = value?.trim() ?? '';
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildPrivatePanelKey(interaction: RepliableInteraction): string | null {
+  if (!('user' in interaction) || !interaction.inGuild()) {
+    return null;
+  }
+
+  return `${interaction.guildId}:${interaction.user.id}`;
 }
 
 function parseNextTaskSequence(taskCode: string | null): number {
@@ -129,16 +139,6 @@ function parsePriorityInput(value: string): 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
 function parsePositiveIntegerInput(value: string): number | null {
   const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function parseAttachmentIdInput(value: string): number | null {
-  const match = /^#?(\d+)$/.exec(value.trim());
-  if (!match) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(match[1]!, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
@@ -191,6 +191,15 @@ async function deferEphemeral(interaction: RepliableInteraction): Promise<void> 
   ) {
     await interaction.deferUpdate();
     return;
+  }
+
+  if (interaction.isButton()) {
+    const privatePanelKey = buildPrivatePanelKey(interaction);
+    const previousMessageId = privatePanelKey ? lastPrivateTaskPanelByUser.get(privatePanelKey) : null;
+    if (previousMessageId) {
+      await interaction.webhook.deleteMessage(previousMessageId).catch(() => null);
+      lastPrivateTaskPanelByUser.delete(privatePanelKey!);
+    }
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -290,10 +299,15 @@ async function showTaskPanelReply(options: {
     mode: options.mode ?? 'overview',
   });
 
-  await options.interaction.editReply({
+  const reply = await options.interaction.editReply({
     content: options.notice ?? null,
     ...payload,
   });
+
+  const privatePanelKey = buildPrivatePanelKey(options.interaction);
+  if (privatePanelKey) {
+    lastPrivateTaskPanelByUser.set(privatePanelKey, reply.id);
+  }
 }
 
 function buildBlockModal(taskId: number): ModalBuilder {
@@ -376,9 +390,6 @@ export async function handleTaskButtonInteraction(
       return;
     case 'set-deadline':
       await handleSetDeadlinePrompt(interaction, taskId);
-      return;
-    case 'clear-deadline':
-      await handleClearDeadlineInteraction(interaction, taskId);
       return;
     case 'add-url':
       await handleAddLinkPrompt(interaction, taskId);
@@ -1372,7 +1383,9 @@ function buildTaskOverviewPanelComponents(options: TaskActionPanelOptions): Arra
           .setEmoji('⛔')
           .setStyle(ButtonStyle.Danger),
       );
-    } else if (access.canManageProgress) {
+    }
+
+    if (access.canManageProgress && isTaskMember) {
       workflowRow.addComponents(
         new ButtonBuilder()
           .setCustomId(`task:review:${task.id}`)
@@ -1964,44 +1977,6 @@ async function handleDeleteAttachmentInteraction(
   });
 }
 
-async function handleClearDeadlineInteraction(interaction: ButtonInteraction, taskId: number): Promise<void> {
-  await deferEphemeral(interaction);
-  const context = await resolveTaskContext(interaction, taskId);
-  if (!context) {
-    return;
-  }
-
-  const { guild, guildConfig, task, dashboardChannel } = context;
-  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
-    await interaction.editReply({ content: 'Only configured manager roles can clear task deadlines.' });
-    return;
-  }
-
-  if (!task.deadlineAt) {
-    await interaction.editReply({ content: `**${task.taskCode}** does not have a deadline set.` });
-    return;
-  }
-
-  const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt: null });
-  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'DEADLINE_CLEARED', summary: 'Manager cleared the task deadline.' });
-  await finalizeTaskInteraction({
-    interaction,
-    guildId: guild.id,
-    guildName: guild.name,
-    refreshedByUserId: interaction.user.id,
-    dashboardChannel,
-    guildConfig,
-    task: updatedTask,
-  });
-
-  await showTaskPanelReply({
-    interaction,
-    taskId: updatedTask.id,
-    mode: 'edit',
-    notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
-  });
-}
-
 async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   await deferEphemeral(interaction);
   if (!interaction.inGuild() || !interaction.guild) {
@@ -2084,7 +2059,14 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     interaction,
     taskId: persistedTask.task.id,
     mode: 'edit',
-    notice: `Created **${persistedTask.task.taskCode}** in <#${persistedTask.task.taskMessageChannelId ?? dashboardChannel.id}>. You can set the deadline or add attachments now.`,
+    notice: [
+      `Created **${persistedTask.task.taskCode}** in <#${persistedTask.task.taskMessageChannelId ?? dashboardChannel.id}>.`,
+      'Next steps:',
+      '1. Check **Deadline** to confirm or clear the due date.',
+      '2. Use **Link** to add a URL attachment.',
+      '3. Use **Add File** then upload the file in the task workspace/dashboard within 10 minutes.',
+      '4. Use the attachment buttons below: ⚙️ edit, ✖️ delete.',
+    ].join('\n'),
   });
 }
 

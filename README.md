@@ -147,18 +147,21 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
 ### `BACKLOG`
 - contributor đủ role có thể `Claim`
 - manager có nút `Edit Task`
-- `Edit Task` là panel quản lý gọn cho:
-  - `Edit Details`
-  - `Set Deadline` / `Update Deadline` / `Clear Deadline`
-  - `Add URL`
+- `Edit Task` là panel quản lý thống nhất, gồm:
+  - `Details`
+  - `Deadline`
+  - `Link`
   - `Add File`
-  - `Remove Attachment`
+  - attachment hiện có với nút:
+    - `⚙️` để edit
+    - `✖️` để delete
 
 ### `IN_PROGRESS`
 - người làm task sẽ thấy nút `Done`
 - manager/admin sẽ thấy:
   - `Edit Task`
   - `Block`
+- nếu một người **vừa là task member vừa là admin/manager**, họ vẫn sẽ thấy `Done` vì họ là người làm task
 - người khác nếu đủ role và còn slot có thể `Join Task`
 - khi người làm bấm `Done`, task chuyển sang `REVIEW`
 
@@ -171,7 +174,8 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
   - `Approve`
   - `Request Changes`
 - manager vẫn có `Edit Task` nếu cần chỉnh metadata/deadline/attachment
-- trạng thái này thường xuất hiện sau khi người làm bấm `Done`
+- trạng thái này xuất hiện sau khi người làm bấm `Done`
+- nếu người đó cũng là admin/reviewer thì lúc này họ sẽ thấy `Approve`
 
 ### `DONE`
 - reviewer / manager có thể `Reopen`
@@ -202,6 +206,14 @@ Attachment giờ đi hoàn toàn theo nút, không còn slash command riêng.
   - task workspace thread, hoặc
   - dashboard channel
 - nếu message có text kèm theo, text đó được lưu làm note/label cho attachment
+- sau khi file đã lưu, panel hiện tại sẽ được refresh lại để thấy attachment mới
+
+### Chỉnh attachment hiện có
+- mỗi attachment hiện có sẽ có 2 nút:
+  - `⚙️` để edit
+  - `✖️` để delete
+- với file attachment: `⚙️` cho phép sửa note/label
+- với link attachment: `⚙️` cho phép sửa URL và label
 
 ### `Remove Attachment`
 - mở modal nhập attachment ID để gỡ
@@ -334,7 +346,13 @@ Sau khi bot vào server, chạy:
 Manager thường làm các việc:
 1. vào `#task-dashboard`
 2. bấm `Create Task` để tạo task mới
-3. sau khi tạo, chỉnh tiếp trong `Edit Task` để set deadline/attachment nếu cần
+3. sau khi tạo, bot mở ngay `Edit Task`
+4. trong `Edit Task`:
+   - bấm `Deadline` để nhập/sửa/xóa hạn chót
+   - bấm `Link` để thêm attachment dạng URL
+   - bấm `Add File` rồi upload file ở workspace/dashboard trong 10 phút
+   - dùng `⚙️` để sửa attachment hiện có
+   - dùng `✖️` để xóa attachment hiện có
 4. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
 5. nếu Discord state lệch, bấm `Reload Dashboard`
 
@@ -345,8 +363,9 @@ Contributor thường làm các việc:
 3. nếu task đã active và còn slot, bấm `Join Task`
 4. làm việc trong `Open Workspace`
 5. khi đang làm:
-   - `Block`
-   - `Done / Review`
+   - nếu bạn là người làm task: bấm `Done` khi hoàn tất để chuyển sang `REVIEW`
+   - nếu bạn chỉ là manager/admin: bạn sẽ thấy `Edit Task` và `Block`
+   - nếu bạn vừa là người làm vừa là admin/manager: bạn vẫn thấy `Done`
 
 ## 6.3. Reviewer
 Reviewer thường làm các việc:
