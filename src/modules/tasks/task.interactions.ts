@@ -1611,10 +1611,20 @@ function buildCreateTaskModal(): ModalBuilder {
         new TextInputBuilder().setCustomId('description').setLabel('Description').setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('required_role').setLabel('Required role (ADMIN / TECHNICIAN / RESEARCHER)').setStyle(TextInputStyle.Short).setRequired(true),
+        new TextInputBuilder()
+          .setCustomId('required_role')
+          .setLabel('Required role')
+          .setPlaceholder('ADMIN / TECHNICIAN / RESEARCHER')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('priority').setLabel('Priority (LOW / MEDIUM / HIGH / URGENT)').setStyle(TextInputStyle.Short).setRequired(false),
+        new TextInputBuilder()
+          .setCustomId('priority')
+          .setLabel('Priority')
+          .setPlaceholder('LOW / MEDIUM / HIGH / URGENT')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
