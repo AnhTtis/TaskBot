@@ -92,33 +92,6 @@ const commands = [
         .addChoices(...DATE_INPUT_MODE_CHOICES)
         .setRequired(false),
     ),
-  new SlashCommandBuilder()
-    .setName('task')
-    .setDescription('TaskBot fallback command for file attachment uploads only.')
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('add-attachment')
-        .setDescription('Manager-only fallback for uploading a file attachment to a task.')
-        .addStringOption((option) =>
-          option
-            .setName('task_code')
-            .setDescription('Task code to update, for example TASK-001.')
-            .setRequired(true)
-            .setAutocomplete(true),
-        )
-        .addAttachmentOption((option) =>
-          option
-            .setName('file')
-            .setDescription('File attachment to associate with the task.')
-            .setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('label')
-            .setDescription('Optional note for the uploaded file.')
-            .setRequired(false),
-        ),
-    ),
 ].map((command) => command.toJSON());
 
 async function main(): Promise<void> {

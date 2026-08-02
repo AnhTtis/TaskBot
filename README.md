@@ -7,7 +7,7 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
 - 1 **task card** cho mỗi task
 - 1 **public workspace thread** cho mỗi task đang hoạt động
 - SQLite/Prisma làm **source of truth**
-- các thao tác hằng ngày chủ yếu đi qua **buttons + modal + panel ephemeral/private**
+- các thao tác hằng ngày đi qua **buttons + modal + panel ephemeral/private**
 
 ---
 
@@ -35,8 +35,8 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
   - `REVIEW`
   - `DONE`
 - workspace thread public tự tạo/mở lại khi cần
-- repair dashboard/card/thread từ DB
-- reminder deadline riêng tư qua DM
+- deadline reminder riêng tư qua DM
+- nút reload dashboard để đồng bộ lại summary/card/thread khi Discord state bị lệch
 
 ### 2.2. Team-based task
 - task có `team_size`
@@ -55,22 +55,14 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
 
 ## 3. Command surface hiện tại
 
-TaskBot hiện **không dùng slash command cho phần quản lý task hằng ngày** nữa, ngoại trừ 1 command fallback cho upload file.
-
-### Slash commands còn giữ lại
+TaskBot hiện chỉ giữ lại **2 slash command kỹ thuật**:
 
 | Command | Mục đích | Ai dùng |
 |---|---|---|
 | `/ping` | kiểm tra bot còn online không | mọi người |
 | `/setup` | cấu hình bot cho server | người có `Manage Server` |
-| `/task add-attachment` | fallback upload file attachment vào task | manager/configured manager |
 
-### Ý nghĩa của `/task add-attachment`
-Command này tồn tại để xử lý giới hạn kỹ thuật của Discord: nút/modal không mở file picker native như slash attachment option.
-
-Bot sẽ cố giữ:
-- **tên file gốc đúng như Discord gửi cho bot**
-- **không chủ động bỏ dấu / không slugify / không rename**
+Không còn slash command cho create/edit/update/attachment task hằng ngày.
 
 ---
 
@@ -82,17 +74,39 @@ Ngay dưới summary dashboard sẽ có các nút:
 - `My Tasks`
 - `Review Queue`
 - `Create Task`
-- `Manager Console`
+- `Reload Dashboard`
 
 ### Ý nghĩa
 - `My Tasks`: xem các task active của chính bạn
 - `Review Queue`: reviewer/manager xem các task đang chờ review
-- `Create Task`: manager tạo task mới bằng modal
-- `Manager Console`: manager mở panel vận hành riêng
+- `Create Task`: manager tạo task mới
+- `Reload Dashboard`: manager chạy đồng bộ lại dashboard/card/thread ngay lập tức, không mở panel trung gian
 
 ---
 
-## 4.2. Task card public buttons
+## 4.2. Tạo task
+
+### Bước 1: Create Task
+Manager bấm `Create Task` để mở modal tạo task cơ bản:
+- title
+- description
+- required role
+- priority
+- team size
+
+### Bước 2: Edit Task ngay sau khi tạo
+Do Discord modal chỉ có tối đa 5 field, bot sẽ tạo task xong rồi **mở ngay panel `Edit Task`** để manager có thể làm tiếp mà không phải mở console khác:
+- set / update / clear deadline
+- add URL attachment
+- add file attachment
+- remove attachment
+- edit details nếu cần chỉnh lại metadata
+
+Vì vậy create flow vẫn bao gồm deadline + attachment, chỉ tách thành bước 2 ngay sau khi task được tạo.
+
+---
+
+## 4.3. Task card public buttons
 
 Task card public chỉ giữ các nút cơ bản, tùy theo trạng thái task.
 
@@ -100,10 +114,15 @@ Task card public chỉ giữ các nút cơ bản, tùy theo trạng thái task.
 - `Claim`
 - `Open Task`
 
-### `IN_PROGRESS` / `BLOCKED`
+### `IN_PROGRESS`
 - `Join Task` *(nếu còn slot)*
 - `Progress`
 - `Open Workspace` *(nếu đã có thread)*
+
+### `BLOCKED`
+- `Join Task` *(nếu còn slot)*
+- `Progress`
+- `Open Workspace`
 
 ### `REVIEW`
 - `Review`
@@ -119,71 +138,94 @@ Lưu ý:
 
 ---
 
-## 4.3. Panel private theo role và trạng thái
+## 4.4. Panel private theo role và trạng thái
 
 Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp với task state và quyền của người bấm.
 
-### Trước khi task được nhận (`BACKLOG`)
+### `BACKLOG`
 - contributor đủ role có thể `Claim`
-- manager có nút `Update Task`
-- `Update Task` mở hub quản lý gồm:
-  - `Update Details`
-  - `Update Deadline` / `Clear Deadline`
-  - `Attachments`
-  - `Repair Task`
+- manager có nút `Edit Task`
+- `Edit Task` là panel quản lý gọn cho:
+  - `Edit Details`
+  - `Set Deadline` / `Update Deadline` / `Clear Deadline`
+  - `Add URL`
+  - `Add File`
+  - `Remove Attachment`
 
-### Sau khi task đã active
-#### `IN_PROGRESS`
+### `IN_PROGRESS`
 - task member / manager có thể:
   - `Block`
   - `Done / Review`
 - người khác nếu đủ role và còn slot có thể `Join Task`
+- manager vẫn có `Edit Task`
 
-#### `BLOCKED`
+### `BLOCKED`
 - task member / manager có thể `Unblock`
+- manager vẫn có `Edit Task`
 
-#### `REVIEW`
+### `REVIEW`
 - reviewer / manager có thể:
   - `Approve`
   - `Request Changes`
+- manager vẫn có `Edit Task` nếu cần chỉnh metadata/deadline/attachment
 
-#### `DONE`
+### `DONE`
 - reviewer / manager có thể `Reopen`
+- nếu có `archive_channel`, task card completed sẽ được chuyển sang archive channel
 
 ### Tối ưu nút
-Bot nên cập nhật lại:
+Bot sẽ cố cập nhật lại:
 - **public task card** nếu state đổi
-- **panel private của người vừa bấm** nếu có thể
+- **private panel của người vừa bấm**
+- **summary dashboard**
 
 Mục tiêu là bấm xong thấy đúng nút tiếp theo, hạn chế phải mở lại panel nhiều lần.
 
 ---
 
-## 4.4. Attachment flow bằng nút
+## 4.5. Attachment flow bằng nút
 
-Trong `Update Task` -> `Attachments`, manager sẽ có panel riêng để:
-- `Add URL`
-- `Add File`
-- `Remove Attachment`
+Attachment giờ đi hoàn toàn theo nút, không còn slash command riêng.
 
 ### `Add URL`
 - mở modal để nhập link
 - có thể thêm note/label
 
 ### `Add File`
-- bot hiển thị hướng dẫn upload file
-- upload file thật hiện vẫn đi qua command fallback:
-  - `/task add-attachment`
-- giới hạn file theo **Discord/server upload limit**
+- manager bấm `Add File` trong `Edit Task`
+- bot sẽ “arm” 1 phiên upload trong 10 phút
+- sau đó manager chỉ cần gửi message có file trong:
+  - task workspace thread, hoặc
+  - dashboard channel
+- nếu message có text kèm theo, text đó được lưu làm note/label cho attachment
 
 ### `Remove Attachment`
-- gỡ attachment khỏi task
+- mở modal nhập attachment ID để gỡ
 
 ### Nguyên tắc tên file
 - file attachment hiển thị ưu tiên theo `fileName`
 - bot **không chủ động đổi tên file**
 - bot **không chủ động bỏ dấu tiếng Việt**
 - label/note là metadata riêng, không thay thế tên file gốc
+
+---
+
+## 4.6. Archive dùng để làm gì
+
+`archive_channel` dùng để chứa **task card đã hoàn thành**.
+
+### Nếu có cấu hình `archive_channel`
+- task `DONE` sẽ được chuyển card sang `#task-archive`
+- task thread sẽ được archive
+- `#task-dashboard` chỉ giữ các task còn cần thao tác:
+  - `BACKLOG`
+  - `IN_PROGRESS`
+  - `BLOCKED`
+  - `REVIEW`
+
+### Nếu không cấu hình `archive_channel`
+- task `DONE` vẫn ở dashboard channel hiện tại
+- thread vẫn được archive khi task hoàn thành
 
 ---
 
@@ -196,7 +238,7 @@ Khuyến nghị role chuẩn:
 - `Researcher`
 
 ### Ý nghĩa
-- `Admin`: vận hành bot, setup, review, repair
+- `Admin`: vận hành bot, setup, review, reload dashboard, edit task
 - `Technician`: contributor cho task kỹ thuật
 - `Researcher`: contributor cho task nghiên cứu
 
@@ -215,14 +257,15 @@ Khuyến nghị tối thiểu:
 ### Category: TASKBOT
 - `#task-dashboard`
 - `#task-feed`
-- `#task-archive` *(optional)*
+- `#task-archive` *(optional nhưng nên có)*
 
 ### Category: THẢO LUẬN
 - `#chung`
 
 TaskBot dùng:
-- `#task-dashboard` để post summary + task cards
-- `#task-feed` để post repair notice / sync report / lỗi vận hành
+- `#task-dashboard` để post summary + task card đang active
+- `#task-feed` để post sync report / lỗi vận hành
+- `#task-archive` để giữ task card đã done
 - workspace chính là **thread động** dưới task card, không cần tạo quá nhiều channel tĩnh
 
 ---
@@ -232,15 +275,18 @@ Bot nên được invite với scopes:
 - `bot`
 - `applications.commands`
 
-Bot cần đủ quyền ở dashboard/feed/thread:
+Bot cần đủ quyền ở dashboard/feed/archive/thread:
 - xem channel
 - gửi tin nhắn
 - xem lịch sử tin nhắn
 - embed links
 - attach files
-- tạo public thread
+- create public thread
 - gửi tin nhắn trong thread
 - manage threads
+
+### Message Content Intent
+Vì file upload giờ đi qua **message có attachment sau khi bấm nút `Add File`**, bot cần **Message Content Intent** trong Discord Developer Portal để đọc attachment + note text của message upload đó.
 
 Người chạy `/setup` cần có:
 - `Manage Server` / `ManageGuild`
@@ -257,7 +303,7 @@ Sau khi bot vào server, chạy:
 ### Các field chính trong `/setup`
 - `dashboard_channel`
 - `feed_channel`
-- `archive_channel` *(optional)*
+- `archive_channel` *(optional nhưng khuyến nghị có)*
 - `admin_role`
 - `secondary_manager_role` *(optional)*
 - `reviewer_role` *(optional)*
@@ -274,9 +320,7 @@ Sau khi bot vào server, chạy:
   - `My Tasks`
   - `Review Queue`
   - `Create Task`
-  - `Manager Console`
-
-Nếu summary cũ không có nút mới, chạy lại `/setup` sau khi deploy bản mới.
+  - `Reload Dashboard`
 
 ---
 
@@ -286,9 +330,9 @@ Nếu summary cũ không có nút mới, chạy lại `/setup` sau khi deploy b�
 Manager thường làm các việc:
 1. vào `#task-dashboard`
 2. bấm `Create Task` để tạo task mới
-3. bấm `Manager Console` khi cần repair
+3. sau khi tạo, chỉnh tiếp trong `Edit Task` để set deadline/attachment nếu cần
 4. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
-5. nếu task còn `BACKLOG`, dùng `Update Task` để tinh chỉnh trước khi ai đó nhận
+5. nếu Discord state lệch, bấm `Reload Dashboard`
 
 ## 6.2. Contributor
 Contributor thường làm các việc:
@@ -442,9 +486,10 @@ Nếu bot có vấn đề, kiểm tra theo thứ tự:
 2. kiểm tra log `Logged in as ...`
 3. kiểm tra `.env`
 4. kiểm tra command đã register chưa
-5. kiểm tra quyền bot ở dashboard/feed/thread
-6. chạy lại `/setup`
-7. nếu Discord state lệch, vào `Manager Console` -> `Repair Dashboard`
+5. kiểm tra quyền bot ở dashboard/feed/archive/thread
+6. kiểm tra **Message Content Intent** đã bật chưa
+7. chạy lại `/setup`
+8. bấm `Reload Dashboard`
 
 ### Khi không thấy nút trên summary
 Thường là do summary cũ chưa được update component mới.
@@ -461,6 +506,14 @@ Sau đó trong Discord chạy lại:
 /setup
 ```
 
+### Khi `Add File` không lưu được attachment
+Thường do một trong các nguyên nhân sau:
+- chưa bấm `Add File` trước khi upload
+- upload quá thời gian 10 phút
+- upload sai channel
+- bot chưa có `Message Content Intent`
+- bot thiếu quyền xem/gửi message ở thread/channel đó
+
 ---
 
 ## 11. Giới hạn hiện tại
@@ -470,9 +523,8 @@ Sau đó trong Discord chạy lại:
 - chưa có Dockerfile chính thức
 - chưa có backup automation
 - chưa có CI/test suite hoàn chỉnh
-- `archive_channel` hiện mới là metadata/config, chưa auto-post task done vào đó
 - contributor claim/join vẫn phụ thuộc tên role Discord `Technician` và `Researcher`
-- file upload attachment vẫn cần command fallback `/task add-attachment`
+- hiện chưa có UI chọn file native kiểu web; `Add File` dùng flow upload message sau khi bấm nút
 
 ---
 

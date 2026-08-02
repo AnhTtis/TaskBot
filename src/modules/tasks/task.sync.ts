@@ -1,4 +1,9 @@
-import { ChannelType, type Guild, type PublicThreadChannel, type TextChannel } from 'discord.js';
+import {
+  ChannelType,
+  type Guild,
+  type PublicThreadChannel,
+  type TextChannel,
+} from 'discord.js';
 import type { GuildConfig } from '@prisma/client';
 
 import { logger } from '../../lib/logger.js';
@@ -52,11 +57,137 @@ function isPublicThreadChannel(channel: unknown): channel is PublicThreadChannel
   );
 }
 
+function isGuildTextChannel(channel: unknown): channel is TextChannel {
+  return (
+    typeof channel === 'object' &&
+    channel !== null &&
+    (channel as { type?: number }).type === ChannelType.GuildText
+  );
+}
+
 function requiresActiveWorkspace(task: TaskWithMembers): boolean {
   return (
     hasTaskTeam(task) &&
     (task.status === 'IN_PROGRESS' || task.status === 'BLOCKED' || task.status === 'REVIEW')
   );
+}
+
+function getTargetTaskCardChannelId(task: TaskWithMembers, guildConfig: GuildConfig): string {
+  return task.status === 'DONE' && guildConfig.archiveChannelId
+    ? guildConfig.archiveChannelId
+    : guildConfig.dashboardChannelId;
+}
+
+async function resolveTaskCardChannel(options: {
+  readonly guild: Guild;
+  readonly guildConfig: GuildConfig;
+  readonly task: TaskWithMembers;
+}): Promise<TextChannel> {
+  const targetChannelId = getTargetTaskCardChannelId(options.task, options.guildConfig);
+  const targetChannel = options.guild.channels.cache.get(targetChannelId)
+    ?? await options.guild.channels.fetch(targetChannelId).catch(() => null);
+
+  if (!isGuildTextChannel(targetChannel)) {
+    const label = targetChannelId === options.guildConfig.dashboardChannelId
+      ? 'dashboard'
+      : 'archive';
+    throw new Error(`The configured ${label} channel is unavailable or is not a text channel.`);
+  }
+
+  return targetChannel;
+}
+
+async function fetchExistingTaskCardMessage(options: {
+  readonly guild: Guild;
+  readonly task: TaskWithMembers;
+  readonly targetChannel: TextChannel;
+}): Promise<{ channel: TextChannel; messageId: string; deleteIfMoved: boolean } | null> {
+  if (!options.task.taskMessageId) {
+    return null;
+  }
+
+  const candidateChannelIds = [
+    options.task.taskMessageChannelId,
+    options.targetChannel.id,
+  ].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+
+  for (const channelId of candidateChannelIds) {
+    const channel = options.guild.channels.cache.get(channelId)
+      ?? await options.guild.channels.fetch(channelId).catch(() => null);
+
+    if (!isGuildTextChannel(channel)) {
+      continue;
+    }
+
+    const message = await channel.messages.fetch(options.task.taskMessageId).catch(() => null);
+    if (!message) {
+      continue;
+    }
+
+    return {
+      channel,
+      messageId: message.id,
+      deleteIfMoved: channel.id !== options.targetChannel.id,
+    };
+  }
+
+  return null;
+}
+
+export async function syncTaskCardMessage(options: {
+  readonly task: TaskWithMembers;
+  readonly guild: Guild;
+  readonly guildConfig: GuildConfig;
+  readonly timezone: string;
+}): Promise<{ task: TaskWithMembers; recreated: boolean; moved: boolean }> {
+  const targetChannel = await resolveTaskCardChannel(options);
+  const existingTaskMessage = await fetchExistingTaskCardMessage({
+    guild: options.guild,
+    task: options.task,
+    targetChannel,
+  });
+
+  if (existingTaskMessage && !existingTaskMessage.deleteIfMoved) {
+    const message = await targetChannel.messages.fetch(existingTaskMessage.messageId);
+    await message.edit({
+      embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
+      components: buildTaskCardComponents(options.task),
+    });
+
+    if (options.task.taskMessageChannelId !== targetChannel.id) {
+      const updatedTask = await updateTaskWithMembers(options.task.id, {
+        taskMessageChannelId: targetChannel.id,
+      });
+      return { task: updatedTask, recreated: false, moved: false };
+    }
+
+    return {
+      task: options.task,
+      recreated: false,
+      moved: false,
+    };
+  }
+
+  const createdTaskMessage = await targetChannel.send({
+    embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
+    components: buildTaskCardComponents(options.task),
+  });
+
+  if (existingTaskMessage?.deleteIfMoved) {
+    const oldChannel = existingTaskMessage.channel;
+    await oldChannel.messages.delete(existingTaskMessage.messageId).catch(() => null);
+  }
+
+  const updatedTask = await updateTaskWithMembers(options.task.id, {
+    taskMessageChannelId: targetChannel.id,
+    taskMessageId: createdTaskMessage.id,
+  });
+
+  return {
+    task: updatedTask,
+    recreated: true,
+    moved: Boolean(existingTaskMessage),
+  };
 }
 
 async function syncSummaryMessage(options: {
@@ -103,50 +234,6 @@ async function syncSummaryMessage(options: {
   });
 
   return { recreated: true };
-}
-
-async function syncTaskCardMessage(options: {
-  readonly task: TaskWithMembers;
-  readonly dashboardChannel: TextChannel;
-  readonly timezone: string;
-}): Promise<{ task: TaskWithMembers; recreated: boolean }> {
-  const existingTaskMessage = options.task.taskMessageId
-    ? await options.dashboardChannel.messages.fetch(options.task.taskMessageId).catch(() => null)
-    : null;
-
-  if (existingTaskMessage) {
-    await existingTaskMessage.edit({
-      embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
-      components: buildTaskCardComponents(options.task),
-    });
-
-    if (options.task.taskMessageChannelId !== options.dashboardChannel.id) {
-      const updatedTask = await updateTaskWithMembers(options.task.id, {
-        taskMessageChannelId: options.dashboardChannel.id,
-      });
-      return { task: updatedTask, recreated: false };
-    }
-
-    return {
-      task: options.task,
-      recreated: false,
-    };
-  }
-
-  const createdTaskMessage = await options.dashboardChannel.send({
-    embeds: [buildTaskCardEmbed(options.task, { timezone: options.timezone })],
-    components: buildTaskCardComponents(options.task),
-  });
-
-  const updatedTask = await updateTaskWithMembers(options.task.id, {
-    taskMessageChannelId: options.dashboardChannel.id,
-    taskMessageId: createdTaskMessage.id,
-  });
-
-  return {
-    task: updatedTask,
-    recreated: true,
-  };
 }
 
 async function syncTaskWorkspace(options: {
@@ -277,7 +364,8 @@ export async function syncTaskDashboard(
     try {
       const cardResult = await syncTaskCardMessage({
         task,
-        dashboardChannel: input.dashboardChannel,
+        guild: input.guild,
+        guildConfig: input.guildConfig,
         timezone: input.guildConfig.defaultTimezone,
       });
       task = cardResult.task;

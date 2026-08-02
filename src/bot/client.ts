@@ -4,7 +4,11 @@ import { logger } from '../lib/logger.js';
 
 export function createDiscordClient(): Client {
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
     partials: [Partials.Channel],
   });
 

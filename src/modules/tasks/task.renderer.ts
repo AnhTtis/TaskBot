@@ -319,7 +319,7 @@ export function buildDashboardSummaryEmbed(
         '',
         SECTION_DIVIDER,
         '',
-        'Use the buttons below to open your private task controls.',
+        'Use the buttons below to open your private task controls or reload the dashboard.',
       ].join('\n'),
     )
     .addFields(
@@ -374,9 +374,9 @@ export function buildDashboardSummaryComponents(): Array<ActionRowBuilder<Button
         .setEmoji('➕')
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId('dashboard:manager-console')
-        .setLabel('Manager Console')
-        .setEmoji('🛠️')
+        .setCustomId('dashboard:reload-dashboard')
+        .setLabel('Reload Dashboard')
+        .setEmoji('🔄')
         .setStyle(ButtonStyle.Secondary),
     ),
   ];

@@ -6,6 +6,7 @@ import { requireDiscordCredentials } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { startDeadlineReminderLoop } from './modules/tasks/task.reminders.js';
+import { handlePendingTaskFileUpload } from './modules/tasks/task.uploads.js';
 
 async function main(): Promise<void> {
   const { discordToken } = requireDiscordCredentials();
@@ -45,6 +46,10 @@ async function main(): Promise<void> {
 
   client.on(Events.InteractionCreate, async (interaction) => {
     await routeInteraction(interaction);
+  });
+
+  client.on(Events.MessageCreate, async (message) => {
+    await handlePendingTaskFileUpload(message);
   });
 
   logger.info('Starting TaskBot...');
