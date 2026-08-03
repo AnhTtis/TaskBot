@@ -57,14 +57,20 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
 
 ## 3. Command surface hiện tại
 
-TaskBot hiện chỉ giữ lại **2 slash command kỹ thuật**:
+TaskBot hiện giữ:
 
 | Command | Mục đích | Ai dùng |
 |---|---|---|
 | `/ping` | kiểm tra bot còn online không | mọi người |
 | `/setup` | cấu hình bot cho server | người có `Manage Server` |
+| `/task add-attachment` | upload file trực tiếp hoặc thêm URL vào task bằng attachment field / input Discord | manager/admin |
 
-Không còn slash command cho create/edit/update/attachment task hằng ngày.
+### Ghi chú về `/task add-attachment`
+- dùng khi đang ở flow `Attachments`
+- `task_code` có **gợi ý chọn danh sách task**, nhưng vẫn có thể **tự nhập tay**
+- nếu upload file, Discord sẽ mở đúng ô chọn file native như trước
+- nếu không upload file, có thể nhập `url`
+- bot vẫn giữ **tên file gốc đúng như Discord gửi vào**
 
 ---
 
@@ -97,16 +103,16 @@ Manager bấm `Create Task` để mở modal tạo task cơ bản:
 - deadline *(optional)*
 
 ### Bước 2: Edit Task ngay sau khi tạo
-Sau khi tạo xong, bot **mở ngay panel `Edit Task`** để manager có thể làm tiếp mà không phải mở console khác:
-- edit details *(bao gồm priority nếu cần chỉnh)*
-- deadline
-- add link attachment
-- add file attachment
-- quản lý attachment hiện có bằng nút:
-  - `⚙️` để edit
-  - `✖️` để delete
+Sau khi tạo xong, bot mở ngay `Edit Task`.
 
-Vì vậy create flow hiện bao gồm deadline ngay từ đầu và attachment ngay sau khi tạo.
+Trong editor này sẽ có:
+- `Edit Details`
+- `Deadline`
+- `Attachments`
+- `Overview`
+- `Exit`
+
+Task summary/editor sẽ là phần chính; các hướng dẫn tiếp theo sẽ nằm **trong editor**, không bị hiện lộn lên trước task nữa.
 
 ---
 
@@ -149,14 +155,12 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
 ### `BACKLOG`
 - contributor đủ role có thể `Claim`
 - manager có nút `Edit Task`
-- `Edit Task` là panel quản lý thống nhất, gồm:
-  - `Details`
+- trong `Edit Task` sẽ có:
+  - `Edit Details`
   - `Deadline`
-  - `Link`
-  - `Add File`
-  - attachment hiện có với nút:
-    - `⚙️` để edit
-    - `✖️` để delete
+  - `Attachments`
+  - `Overview`
+  - `Exit`
 
 ### `IN_PROGRESS`
 - người làm task sẽ thấy nút `Done`
@@ -189,36 +193,50 @@ Bot sẽ cố cập nhật lại:
 - **private panel của người vừa bấm**
 - **summary dashboard**
 
-Mục tiêu là bấm xong thấy đúng nút tiếp theo, hạn chế phải mở lại panel nhiều lần.
+Ngoài ra, các panel chính đều nên có `Exit` để đỡ rườm rà khi mở nhiều bảng.
 
 ---
 
-## 4.5. Attachment flow bằng nút
+## 4.5. Attachment flow
 
-Attachment giờ đi hoàn toàn theo nút, không còn slash command riêng.
+Attachment không còn rải ra thành nhiều nút ở editor chính nữa.
 
-### `Add URL`
-- mở modal để nhập link
-- có thể thêm note/label
+### Trong `Edit Task`
+- bấm `Attachments`
+- bot mở panel attachment riêng
 
-### `Add File`
-- manager bấm `Add File` trong `Edit Task`
-- bot sẽ “arm” 1 phiên upload trong 10 phút
-- sau đó manager chỉ cần gửi message có file trong:
-  - task workspace thread, hoặc
-  - dashboard channel
-- nếu message có text kèm theo, text đó được lưu làm note/label cho attachment
-- sau khi file đã lưu, panel hiện tại sẽ được refresh lại để thấy attachment mới
+### Panel `Attachments`
+Panel này sẽ:
+- hiển thị danh sách attachment hiện tại bằng **tên file/link dễ đọc**
+- có nút hướng dẫn:
+  - `Upload File`
+  - `Add URL`
+- có nút theo từng attachment để:
+  - `⚙️ Fix ...`
+  - `✖️ X ...`
+- có:
+  - `Back`
+  - `Exit`
+
+### Upload file như trước
+Khi cần upload file trực tiếp kiểu cũ:
+- dùng `/task add-attachment`
+- chọn task từ list suggestion hoặc tự nhập `TASK-xxx`
+- upload file trực tiếp vào attachment field của command
+- có thể thêm note/label nếu muốn
+
+### Add URL
+- cũng dùng `/task add-attachment`
+- không upload file
+- điền `url`
+- có thể thêm `label`
 
 ### Chỉnh attachment hiện có
-- mỗi attachment hiện có sẽ có 2 nút:
-  - `⚙️` để edit
-  - `✖️` để delete
+- trong panel `Attachments`, mỗi attachment có nút:
+  - `⚙️` để sửa
+  - `✖️` để xóa
 - với file attachment: `⚙️` cho phép sửa note/label
 - với link attachment: `⚙️` cho phép sửa URL và label
-
-### `Remove Attachment`
-- mở modal nhập attachment ID để gỡ
 
 ### Nguyên tắc tên file
 - file attachment hiển thị ưu tiên theo `fileName`
@@ -303,9 +321,6 @@ Bot cần đủ quyền ở dashboard/feed/archive/thread:
 - gửi tin nhắn trong thread
 - manage threads
 
-### Message Content Intent
-Vì file upload giờ đi qua **message có attachment sau khi bấm nút `Add File`**, bot cần **Message Content Intent** trong Discord Developer Portal để đọc attachment + note text của message upload đó.
-
 Người chạy `/setup` cần có:
 - `Manage Server` / `ManageGuild`
 
@@ -351,12 +366,12 @@ Manager thường làm các việc:
 3. sau khi tạo, bot mở ngay `Edit Task`
 4. trong `Edit Task`:
    - bấm `Deadline` để nhập/sửa/xóa hạn chót
-   - bấm `Link` để thêm attachment dạng URL
-   - bấm `Add File` rồi upload file ở workspace/dashboard trong 10 phút
+   - bấm `Attachments` để mở panel attachment
+   - từ đó dùng `/task add-attachment` nếu cần upload file hoặc thêm URL
    - dùng `⚙️` để sửa attachment hiện có
    - dùng `✖️` để xóa attachment hiện có
-4. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
-5. nếu Discord state lệch, bấm `Reload Dashboard`
+5. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
+6. nếu Discord state lệch, bấm `Reload Dashboard`
 
 ## 6.2. Contributor
 Contributor thường làm các việc:
@@ -422,6 +437,7 @@ NODE_ENV=development
    - test `/ping`
    - chạy `/setup`
    - bấm `Create Task` từ summary dashboard
+   - test `/task add-attachment`
 
 Nếu PowerShell chặn `npm.ps1`, dùng `npm.cmd` thay cho `npm`.
 
@@ -512,9 +528,8 @@ Nếu bot có vấn đề, kiểm tra theo thứ tự:
 3. kiểm tra `.env`
 4. kiểm tra command đã register chưa
 5. kiểm tra quyền bot ở dashboard/feed/archive/thread
-6. kiểm tra **Message Content Intent** đã bật chưa
-7. chạy lại `/setup`
-8. bấm `Reload Dashboard`
+6. chạy lại `/setup`
+7. bấm `Reload Dashboard`
 
 ### Khi không thấy nút trên summary
 Thường là do summary cũ chưa được update component mới.
@@ -531,13 +546,13 @@ Sau đó trong Discord chạy lại:
 /setup
 ```
 
-### Khi `Add File` không lưu được attachment
-Thường do một trong các nguyên nhân sau:
-- chưa bấm `Add File` trước khi upload
-- upload quá thời gian 10 phút
-- upload sai channel
-- bot chưa có `Message Content Intent`
-- bot thiếu quyền xem/gửi message ở thread/channel đó
+### Khi upload attachment không hoạt động như mong đợi
+Kiểm tra:
+- đã dùng đúng `/task add-attachment`
+- đã chọn đúng `task_code` hoặc nhập đúng `TASK-xxx`
+- nếu upload file: có chọn đúng attachment field chưa
+- nếu thêm link: có nhập đúng `url` chưa
+- bot có quyền attach files / send messages ở server đó không
 
 ### Deadline chuẩn hiện tại
 - toàn bộ bot dùng **giờ Việt Nam (GMT+7)**
@@ -554,7 +569,7 @@ Thường do một trong các nguyên nhân sau:
 - chưa có backup automation
 - chưa có CI/test suite hoàn chỉnh
 - contributor claim/join vẫn phụ thuộc tên role Discord `Technician` và `Researcher`
-- hiện chưa có UI chọn file native kiểu web; `Add File` dùng flow upload message sau khi bấm nút
+- upload file trực tiếp vẫn phụ thuộc vào Discord slash attachment field, không thể nhúng file picker native vào button/modal
 
 ---
 

@@ -73,6 +73,39 @@ const commands = [
           { name: '7 days', value: 10080 },
         )
         .setRequired(false),
+    ),
+  new SlashCommandBuilder()
+    .setName('task')
+    .setDescription('Attachment-only task helpers.')
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('add-attachment')
+        .setDescription('Upload a file or add a URL to a task.')
+        .addStringOption((option) =>
+          option
+            .setName('task_code')
+            .setDescription('Task code, for example TASK-003.')
+            .setRequired(true)
+            .setAutocomplete(true),
+        )
+        .addAttachmentOption((option) =>
+          option
+            .setName('file')
+            .setDescription('File to attach to the task.')
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('url')
+            .setDescription('URL to attach to the task.')
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('label')
+            .setDescription('Optional note or label for this attachment.')
+            .setRequired(false),
+        ),
     )
 ].map((command) => command.toJSON());
 

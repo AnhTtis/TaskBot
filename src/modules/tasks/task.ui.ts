@@ -15,7 +15,7 @@ import { getManagerRoleIds, getReviewerRoleIds } from './task.policy.js';
 import { formatAttachmentLabel, formatRoleMentions } from './task.helpers.js';
 import type { TaskWithMembers } from './task.types.js';
 
-export type TaskPanelMode = 'overview' | 'edit';
+export type TaskPanelMode = 'overview' | 'edit' | 'attachments';
 
 export type TaskActionAccess = {
   readonly manager: boolean;
@@ -30,12 +30,29 @@ type TaskPanelPayloadOptions = {
   readonly guildConfig: GuildConfig;
   readonly access: TaskActionAccess;
   readonly mode: TaskPanelMode;
+  readonly notice?: string | null;
 };
 
+function withNotice(embed: EmbedBuilder, notice?: string | null): EmbedBuilder {
+  if (!notice) {
+    return embed;
+  }
+
+  return embed.addFields({
+    name: 'Update',
+    value: notice,
+    inline: false,
+  });
+}
+
+function truncateLabel(value: string, maxLength = 70): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
 function buildTaskOverviewPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>): EmbedBuilder {
-  const { task, guildConfig, access } = options;
+  const { task, guildConfig, access, notice } = options;
   const attachmentLines = task.attachments.length > 0
-    ? task.attachments.slice(0, 8).map((attachment) => `#${attachment.id} • ${formatAttachmentLabel(attachment)}`)
+    ? task.attachments.slice(0, 8).map((attachment) => `• ${formatAttachmentLabel(attachment)}`)
     : ['No attachments yet.'];
 
   const phaseLine = (() => {
@@ -59,41 +76,40 @@ function buildTaskOverviewPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mod
     }
   })();
 
-  return new EmbedBuilder()
-    .setTitle(`🧰 ${task.taskCode} • ${task.title}`)
-    .setColor(0x5865f2)
-    .setDescription([
-      `Status: **${task.status}**`,
-      phaseLine,
-      '',
-      `Your access: ${[
-        access.canClaim ? 'claim/join' : null,
-        access.canManageProgress ? 'progress actions' : null,
-        access.reviewer ? 'review actions' : null,
-        access.manager ? 'task editing' : null,
-      ].filter(Boolean).join(', ') || 'view only'}`,
-      '',
-      'The buttons below are private to you and should refresh as the task changes.',
-    ].join('\n'))
-    .addFields(
-      {
-        name: 'Attachments',
-        value: attachmentLines.join('\n'),
-        inline: false,
-      },
-      {
-        name: 'Review roles',
-        value: formatRoleMentions(
-          getReviewerRoleIds(guildConfig),
-          formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
-        ),
-        inline: false,
-      },
-    )
-    .setFooter({
-      text: 'Task buttons are shown according to task state and your permissions.',
-    })
-    .setTimestamp(task.updatedAt);
+  return withNotice(
+    new EmbedBuilder()
+      .setTitle(`🧰 ${task.taskCode} • ${task.title}`)
+      .setColor(0x5865f2)
+      .setDescription([
+        `Status: **${task.status}**`,
+        phaseLine,
+        '',
+        `Your access: ${[
+          access.canClaim ? 'claim/join' : null,
+          access.canManageProgress ? 'progress actions' : null,
+          access.reviewer ? 'review actions' : null,
+          access.manager ? 'task editing' : null,
+        ].filter(Boolean).join(', ') || 'view only'}`,
+      ].join('\n'))
+      .addFields(
+        {
+          name: 'Attachments',
+          value: attachmentLines.join('\n'),
+          inline: false,
+        },
+        {
+          name: 'Review roles',
+          value: formatRoleMentions(
+            getReviewerRoleIds(guildConfig),
+            formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
+          ),
+          inline: false,
+        },
+      )
+      .setFooter({ text: 'Use Exit to close this private panel.' })
+      .setTimestamp(task.updatedAt),
+    notice,
+  );
 }
 
 function buildTaskOverviewPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>): Array<ActionRowBuilder<ButtonBuilder>> {
@@ -182,73 +198,57 @@ function buildTaskOverviewPanelComponents(options: Omit<TaskPanelPayloadOptions,
     rows.push(workflowRow);
   }
 
+  const manageRow = new ActionRowBuilder<ButtonBuilder>();
   if (access.manager) {
-    rows.push(
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:edit-task:${task.id}`)
-          .setLabel('Edit Task')
-          .setEmoji('⚙️')
-          .setStyle(ButtonStyle.Secondary),
-      ),
+    manageRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:edit-task:${task.id}`)
+        .setLabel('Edit Task')
+        .setEmoji('⚙️')
+        .setStyle(ButtonStyle.Secondary),
     );
   }
+
+  manageRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`task:exit:${task.id}`)
+      .setLabel('Exit')
+      .setEmoji('✖️')
+      .setStyle(ButtonStyle.Secondary),
+  );
+  rows.push(manageRow);
 
   return rows;
 }
 
 function buildTaskEditPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>): EmbedBuilder {
-  const { task } = options;
+  const { task, notice } = options;
   const attachmentLines = task.attachments.length > 0
-    ? task.attachments.slice(0, 12).map((attachment) => `#${attachment.id} • ${formatAttachmentLabel(attachment)}`)
+    ? task.attachments.slice(0, 8).map((attachment) => `• ${formatAttachmentLabel(attachment)}`)
     : ['No attachments yet.'];
 
-  return new EmbedBuilder()
-    .setTitle(`Edit Task • ${task.taskCode}`)
-    .setColor(0x5865f2)
-    .setDescription([
-      task.status === 'BACKLOG'
-        ? 'Manager-only task editor for pre-claim tuning.'
-        : 'Manager-only task editor for live task maintenance.',
-      '',
-      'Use the controls below to edit details, update the deadline, add links/files, and manage existing attachments.',
-      'Attachment rows use ⚙️ to edit and ✖️ to delete.',
-      'When you press **Add File**, upload the next file message in the task workspace or dashboard within 10 minutes.',
-    ].join('\n'))
-    .addFields({
-      name: 'Current attachments',
-      value: attachmentLines.join('\n'),
-      inline: false,
-    })
-    .setTimestamp(task.updatedAt);
-}
-
-function buildAttachmentActionRows(task: TaskWithMembers): Array<ActionRowBuilder<ButtonBuilder>> {
-  const attachmentPairs = task.attachments.slice(0, 4);
-  const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
-
-  for (let index = 0; index < attachmentPairs.length; index += 2) {
-    const row = new ActionRowBuilder<ButtonBuilder>();
-
-    for (const attachment of attachmentPairs.slice(index, index + 2)) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`task:attachment-edit:${task.id}:${attachment.id}`)
-          .setLabel(`#${attachment.id}`)
-          .setEmoji('⚙️')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`task:attachment-delete:${task.id}:${attachment.id}`)
-          .setLabel(`#${attachment.id}`)
-          .setEmoji('✖️')
-          .setStyle(ButtonStyle.Danger),
-      );
-    }
-
-    rows.push(row);
-  }
-
-  return rows;
+  return withNotice(
+    new EmbedBuilder()
+      .setTitle(`Edit Task • ${task.taskCode}`)
+      .setColor(0x5865f2)
+      .setDescription([
+        task.status === 'BACKLOG'
+          ? 'Manager-only task editor for pre-claim tuning.'
+          : 'Manager-only task editor for live task maintenance.',
+        '',
+        `Title: **${task.title}**`,
+        `Deadline: **${formatDeadlineForInput(task.deadlineAt ?? null) || 'Not set'}**`,
+        `Attachments: **${task.attachments.length}**`,
+      ].join('\n'))
+      .addFields({
+        name: 'Current attachments',
+        value: attachmentLines.join('\n'),
+        inline: false,
+      })
+      .setFooter({ text: 'Use Attachments to upload, replace, or remove files/links. Use Exit to close.' })
+      .setTimestamp(task.updatedAt),
+    notice,
+  );
 }
 
 function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>): Array<ActionRowBuilder<ButtonBuilder>> {
@@ -258,7 +258,7 @@ function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mo
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`task:edit-details:${task.id}`)
-        .setLabel('Details')
+        .setLabel('Edit Details')
         .setEmoji('⚙️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
@@ -267,27 +267,115 @@ function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mo
         .setEmoji('🗓️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`task:add-url:${task.id}`)
-        .setLabel('Link')
-        .setEmoji('🔗')
+        .setCustomId(`task:attachments:${task.id}`)
+        .setLabel('Attachments')
+        .setEmoji('📎')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:back-actions:${task.id}`)
+        .setLabel('Overview')
+        .setEmoji('↩️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`task:add-file:${task.id}`)
-        .setLabel('Add File')
+        .setCustomId(`task:exit:${task.id}`)
+        .setLabel('Exit')
+        .setEmoji('✖️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildTaskAttachmentsPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>): EmbedBuilder {
+  const { task, notice } = options;
+  const attachmentLines = task.attachments.length > 0
+    ? task.attachments.slice(0, 8).map((attachment, index) => `${index + 1}. ${formatAttachmentLabel(attachment)}`)
+    : ['No attachments yet.'];
+
+  return withNotice(
+    new EmbedBuilder()
+      .setTitle(`Attachments • ${task.taskCode}`)
+      .setColor(0x5865f2)
+      .setDescription([
+        'Attachment uploads use the dedicated slash command path so Discord can show the native file upload field.',
+        `Use "/task add-attachment" for **${task.taskCode}** to upload a file or add a URL.`,
+        'Choose an existing attachment below to edit or delete it.',
+      ].join('\n'))
+      .addFields({
+        name: 'Current attachments',
+        value: attachmentLines.join('\n'),
+        inline: false,
+      })
+      .setFooter({ text: 'Use Back to return to Edit Task or Exit to close.' })
+      .setTimestamp(task.updatedAt),
+    notice,
+  );
+}
+
+function buildAttachmentActionRows(task: TaskWithMembers): Array<ActionRowBuilder<ButtonBuilder>> {
+  const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
+
+  for (const attachment of task.attachments.slice(0, 4)) {
+    const displayName = truncateLabel(formatAttachmentLabel(attachment), 26);
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`task:attachment-edit:${task.id}:${attachment.id}`)
+          .setLabel(`Fix ${displayName}`)
+          .setEmoji('⚙️')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`task:attachment-delete:${task.id}:${attachment.id}`)
+          .setLabel(`X ${displayName}`)
+          .setEmoji('✖️')
+          .setStyle(ButtonStyle.Danger),
+      ),
+    );
+  }
+
+  return rows;
+}
+
+function buildTaskAttachmentsPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>): Array<ActionRowBuilder<ButtonBuilder>> {
+  const { task } = options;
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:attachment-upload-help:${task.id}`)
+        .setLabel('Upload File')
         .setEmoji('📤')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`task:back-actions:${task.id}`)
-        .setLabel('Back')
-        .setEmoji('↩️')
+        .setCustomId(`task:attachment-link-help:${task.id}`)
+        .setLabel('Add URL')
+        .setEmoji('🔗')
         .setStyle(ButtonStyle.Secondary),
     ),
     ...buildAttachmentActionRows(task),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:back-edit:${task.id}`)
+        .setLabel('Back')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`task:exit:${task.id}`)
+        .setLabel('Exit')
+        .setEmoji('✖️')
+        .setStyle(ButtonStyle.Secondary),
+    ),
   ];
 }
 
 export function buildTaskPanelPayload(options: TaskPanelPayloadOptions) {
   switch (options.mode) {
+    case 'attachments':
+      return {
+        embeds: [buildTaskAttachmentsPanelEmbed(options)],
+        components: buildTaskAttachmentsPanelComponents(options),
+      };
     case 'edit':
       return {
         embeds: [buildTaskEditPanelEmbed(options)],
@@ -370,20 +458,6 @@ export function buildDeadlineModal(task: TaskWithMembers): ModalBuilder {
           .setValue(formatDeadlineForInput(task.deadlineAt ?? null))
           .setStyle(TextInputStyle.Short)
           .setRequired(false),
-      ),
-    );
-}
-
-export function buildAddLinkModal(task: TaskWithMembers): ModalBuilder {
-  return new ModalBuilder()
-    .setCustomId(`task:add-link-modal:${task.id}`)
-    .setTitle(`Add link • ${task.taskCode}`)
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('url').setLabel('URL').setStyle(TextInputStyle.Short).setRequired(true),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('label').setLabel('Optional label').setStyle(TextInputStyle.Short).setRequired(false),
       ),
     );
 }

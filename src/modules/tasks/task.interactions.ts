@@ -42,7 +42,6 @@ import {
   clearTaskMembers,
   countActiveTasksForAssignee,
   createTask,
-  createTaskAttachment,
   createTaskEvent,
   createTaskStatusHistory,
   findLatestTaskForGuild,
@@ -68,7 +67,6 @@ import {
 import { refreshTaskPresentation } from './task.refresh.js';
 import { syncTaskDashboard } from './task.sync.js';
 import {
-  buildAddLinkModal,
   buildCreateTaskModal,
   buildDeadlineModal,
   buildEditAttachmentModal,
@@ -77,7 +75,6 @@ import {
   getTaskActionAccess,
   type TaskPanelMode,
 } from './task.ui.js';
-import { armTaskFileUpload } from './task.uploads.js';
 
 type TaskInteraction = ButtonInteraction | ModalSubmitInteraction;
 type ResolvedTask = NonNullable<Awaited<ReturnType<typeof findTaskByIdWithMembers>>>;
@@ -230,10 +227,11 @@ async function showTaskPanelReply(options: {
       context.guildConfig,
     ),
     mode: options.mode ?? 'overview',
+    notice: options.notice ?? null,
   });
 
   const reply = await options.interaction.editReply({
-    content: options.notice ?? null,
+    content: null,
     ...payload,
   });
 
@@ -294,11 +292,23 @@ export async function handleTaskButtonInteraction(
     case 'edit-task':
       await handleTaskEditPanelInteraction(interaction, taskId);
       return;
-    case 'add-file':
-      await handleTaskAddFilePrompt(interaction, taskId);
+    case 'attachments':
+      await handleTaskAttachmentsPanelInteraction(interaction, taskId);
+      return;
+    case 'attachment-upload-help':
+      await handleAttachmentUploadHelpInteraction(interaction, taskId);
+      return;
+    case 'attachment-link-help':
+      await handleAttachmentLinkHelpInteraction(interaction, taskId);
       return;
     case 'back-actions':
       await handleTaskActionsPanelInteraction(interaction, taskId);
+      return;
+    case 'back-edit':
+      await handleTaskEditPanelInteraction(interaction, taskId);
+      return;
+    case 'exit':
+      await handleTaskExitInteraction(interaction);
       return;
     case 'block':
       await handleBlockTaskPrompt(interaction, taskId);
@@ -323,9 +333,6 @@ export async function handleTaskButtonInteraction(
       return;
     case 'set-deadline':
       await handleSetDeadlinePrompt(interaction, taskId);
-      return;
-    case 'add-url':
-      await handleAddLinkPrompt(interaction, taskId);
       return;
     case 'attachment-edit':
       if (!attachmentId) {
@@ -381,12 +388,6 @@ export async function handleTaskModalSubmitInteraction(
         break;
       }
       await handleSetDeadlineModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
-      return;
-    case 'add-link-modal':
-      if (!taskIdPart) {
-        break;
-      }
-      await handleAddLinkModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
       return;
     case 'attachment-edit-modal':
       if (!taskIdPart || !attachmentIdPart) {
@@ -1344,7 +1345,7 @@ async function handleTaskEditPanelInteraction(
   await showTaskPanelReply({ interaction, taskId, mode: 'edit' });
 }
 
-async function handleTaskAddFilePrompt(
+async function handleTaskAttachmentsPanelInteraction(
   interaction: ButtonInteraction,
   taskId: number,
 ): Promise<void> {
@@ -1356,29 +1357,78 @@ async function handleTaskAddFilePrompt(
   }
 
   if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
-    await interaction.editReply({ content: 'Only configured manager roles can add task files.' });
+    await interaction.editReply({ content: 'Only configured manager roles can manage attachments.' });
     return;
   }
 
-  const uploadChannelIds = [context.task.threadChannelId, context.dashboardChannel.id]
-    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
-  const uploadChannels = uploadChannelIds.map((channelId) => `<#${channelId}>`).join(' or ');
-  const uploadWindow = armTaskFileUpload({
-    guildId: context.guild.id,
-    userId: interaction.user.id,
-    taskId: context.task.id,
-    allowedChannelIds: uploadChannelIds,
-  });
+  await showTaskPanelReply({ interaction, taskId, mode: 'attachments' });
+}
+
+async function handleAttachmentUploadHelpInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can upload task files.' });
+    return;
+  }
 
   await showTaskPanelReply({
     interaction,
     taskId,
-    mode: 'edit',
+    mode: 'attachments',
     notice: [
-      `Upload the next file for **${context.task.taskCode}** in ${uploadChannels} before <t:${Math.floor(uploadWindow.expiresAt / 1000)}:t>.`,
-      'If you include message text with the upload, it will be saved as the attachment note.',
-      'The original filename is kept exactly as Discord provides it.',
+      `Use **/task add-attachment** and choose **${context.task.taskCode}** in the task list or type it manually.`,
+      'Upload the file directly in the command attachment field.',
+      'Optional: fill the note/label field if you want extra context.',
     ].join('\n'),
+  });
+}
+
+async function handleAttachmentLinkHelpInteraction(
+  interaction: ButtonInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can add attachment links.' });
+    return;
+  }
+
+  await showTaskPanelReply({
+    interaction,
+    taskId,
+    mode: 'attachments',
+    notice: [
+      `Use **/task add-attachment** and choose **${context.task.taskCode}** in the task list or type it manually.`,
+      'Paste the URL into the command instead of uploading a file.',
+      'Optional: fill the note/label field if you want extra context.',
+    ].join('\n'),
+  });
+}
+
+async function handleTaskExitInteraction(interaction: ButtonInteraction): Promise<void> {
+  const privatePanelKey = buildPrivatePanelKey(interaction);
+  if (privatePanelKey) {
+    lastPrivateTaskPanelByUser.delete(privatePanelKey);
+  }
+
+  await interaction.deferUpdate();
+  await interaction.deleteReply().catch(async () => {
+    await interaction.editReply({ content: 'Closed.', embeds: [], components: [] });
   });
 }
 
@@ -1408,20 +1458,6 @@ async function handleSetDeadlinePrompt(interaction: ButtonInteraction, taskId: n
   }
 
   await interaction.showModal(buildDeadlineModal(context.task));
-}
-
-async function handleAddLinkPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
-  const context = await resolveTaskContext(interaction, taskId);
-  if (!context) {
-    return;
-  }
-
-  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
-    await interaction.reply({ content: 'Only configured manager roles can add task links.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-
-  await interaction.showModal(buildAddLinkModal(context.task));
 }
 
 async function handleEditAttachmentPrompt(
@@ -1583,9 +1619,9 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
       `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
       'Next steps:',
       '1. Check **Deadline** to confirm or clear the due date.',
-      '2. Use **Link** to add a URL attachment.',
-      '3. Use **Add File** then upload the file in the task workspace/dashboard within 10 minutes.',
-      '4. Use the attachment buttons below: ⚙️ edit, ✖️ delete.',
+      '2. Open **Attachments** to review current files/links.',
+      '3. From **Attachments**, use **Upload File** or **Add URL** for the guided slash-command path.',
+      '4. Use the attachment rows there to fix or delete existing items.',
     ].join('\n'),
   });
 }
@@ -1722,58 +1758,6 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
     taskId: updatedTask.id,
     mode: 'edit',
     notice: `Updated the deadline for **${updatedTask.taskCode}**.`,
-  });
-}
-
-async function handleAddLinkModalSubmit(interaction: ModalSubmitInteraction, taskId: number): Promise<void> {
-  await deferEphemeral(interaction);
-  const context = await resolveTaskContext(interaction, taskId);
-  if (!context) {
-    return;
-  }
-
-  const { guild, guildConfig, task, dashboardChannel } = context;
-  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
-    await interaction.editReply({ content: 'Only configured manager roles can add task links.' });
-    return;
-  }
-
-  const url = interaction.fields.getTextInputValue('url').trim();
-  const label = normalizeOptionalText(interaction.fields.getTextInputValue('label'));
-  if (!/^https?:\/\//i.test(url)) {
-    await interaction.editReply({ content: 'Please provide a valid http/https URL.' });
-    return;
-  }
-
-  const attachment = await createTaskAttachment({
-    taskId: task.id,
-    label,
-    url,
-    addedByDiscordUserId: interaction.user.id,
-  });
-
-  const updatedTask = await findTaskByIdWithMembers(task.id);
-  if (!updatedTask) {
-    await interaction.editReply({ content: `The link was saved, but ${task.taskCode} could not be reloaded.` });
-    return;
-  }
-
-  await createTaskEvent({ taskId: updatedTask.id, actorDiscordUserId: interaction.user.id, type: 'ATTACHMENT_ADDED', summary: 'Manager added a task attachment.', details: `${attachment.id} • ${formatAttachmentLabel(attachment)}` });
-  await finalizeTaskInteraction({
-    interaction,
-    guildId: guild.id,
-    guildName: guild.name,
-    refreshedByUserId: interaction.user.id,
-    dashboardChannel,
-    guildConfig,
-    task: updatedTask,
-  });
-
-  await showTaskPanelReply({
-    interaction,
-    taskId: updatedTask.id,
-    mode: 'edit',
-    notice: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${updatedTask.taskCode}**.`,
   });
 }
 

@@ -9,6 +9,10 @@ import { DiscordAPIError, MessageFlags } from 'discord.js';
 import { logger } from '../lib/logger.js';
 import { handleSetupCommand } from '../modules/guild-config/guild-config.service.js';
 import {
+  handleTaskAutocompleteInteraction,
+  handleTaskCommand,
+} from '../modules/tasks/task.commands.js';
+import {
   handleTaskButtonInteraction,
   handleTaskModalSubmitInteraction,
 } from '../modules/tasks/task.interactions.js';
@@ -17,6 +21,11 @@ export async function routeInteraction(interaction: Interaction): Promise<void> 
   try {
     if (interaction.isChatInputCommand()) {
       await handleChatInputCommand(interaction);
+      return;
+    }
+
+    if (interaction.isAutocomplete()) {
+      await handleAutocompleteInteraction(interaction);
       return;
     }
 
@@ -63,6 +72,11 @@ async function handleChatInputCommand(
       return;
     }
 
+    case 'task': {
+      await handleTaskCommand(interaction);
+      return;
+    }
+
     default: {
       await interaction.reply({
         content: `Unknown command: ${interaction.commandName}`,
@@ -70,6 +84,17 @@ async function handleChatInputCommand(
       });
     }
   }
+}
+
+async function handleAutocompleteInteraction(
+  interaction: import('discord.js').AutocompleteInteraction,
+): Promise<void> {
+  if (interaction.commandName === 'task') {
+    await handleTaskAutocompleteInteraction(interaction);
+    return;
+  }
+
+  await interaction.respond([]);
 }
 
 async function handleButtonInteraction(
