@@ -47,6 +47,8 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
 ### 2.3. Quyền vận hành
 - `Admin` là role quản lý chính
 - có thể cấu hình thêm manager/reviewer role trong `/setup`
+- toàn bộ deadline mặc định theo giờ Việt Nam `GMT+7`
+- toàn bộ input deadline dùng format `dd/MM/yyyy HH:mm`
 - contributor claim/join hiện vẫn phụ thuộc tên role Discord:
   - `Technician`
   - `Researcher`

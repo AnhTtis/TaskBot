@@ -15,7 +15,6 @@ import type {
   CreateTaskInput,
   CreateTaskReminderReceiptInput,
   CreateTaskStatusHistoryInput,
-  DashboardSummaryCounts,
   DashboardSummaryTask,
   TaskWithMembers,
 } from './task.types.js';
@@ -37,30 +36,10 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   return prisma.task.create({ data });
 }
 
-export async function findTaskById(taskId: number): Promise<Task | null> {
-  return prisma.task.findUnique({
-    where: { id: taskId },
-  });
-}
-
 export async function findTaskByIdWithMembers(taskId: number): Promise<TaskWithMembers | null> {
   return prisma.task.findUnique({
     where: { id: taskId },
     include: taskWithMembersInclude,
-  });
-}
-
-export async function findTaskByCode(
-  guildId: string,
-  taskCode: string,
-): Promise<Task | null> {
-  return prisma.task.findUnique({
-    where: {
-      guildId_taskCode: {
-        guildId,
-        taskCode,
-      },
-    },
   });
 }
 
@@ -83,15 +62,6 @@ export async function findLatestTaskForGuild(guildId: string): Promise<Task | nu
   return prisma.task.findFirst({
     where: { guildId },
     orderBy: { id: 'desc' },
-  });
-}
-
-export async function listTasksForGuild(guildId: string): Promise<Task[]> {
-  return prisma.task.findMany({
-    where: { guildId },
-    orderBy: {
-      createdAt: 'asc',
-    },
   });
 }
 
@@ -153,16 +123,6 @@ export async function listTasksForDeadlineReminders(options: {
       deadlineAt: 'asc',
     },
     include: taskWithMembersInclude,
-  });
-}
-
-export async function updateTask(
-  taskId: number,
-  data: Prisma.TaskUncheckedUpdateInput,
-): Promise<Task> {
-  return prisma.task.update({
-    where: { id: taskId },
-    data,
   });
 }
 
@@ -439,32 +399,6 @@ export async function clearTaskMembers(taskId: number): Promise<void> {
   });
 }
 
-export async function transitionTask(
-  taskId: number,
-  allowedStatuses: TaskStatus[],
-  data: Prisma.TaskUncheckedUpdateInput,
-): Promise<Task | null> {
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.task.updateMany({
-      where: {
-        id: taskId,
-        status: {
-          in: allowedStatuses,
-        },
-      },
-      data,
-    });
-
-    if (updated.count === 0) {
-      return null;
-    }
-
-    return tx.task.findUnique({
-      where: { id: taskId },
-    });
-  });
-}
-
 export async function transitionTaskWithMembers(
   taskId: number,
   allowedStatuses: TaskStatus[],
@@ -518,42 +452,3 @@ export async function countActiveTasksForAssignee(
   });
 }
 
-export async function countTasksByStatus(
-  guildId: string,
-): Promise<DashboardSummaryCounts> {
-  const groupedCounts = await prisma.task.groupBy({
-    by: ['status'],
-    where: { guildId },
-    _count: { _all: true },
-  });
-
-  const counts: DashboardSummaryCounts = {
-    backlog: 0,
-    inProgress: 0,
-    blocked: 0,
-    review: 0,
-    done: 0,
-  };
-
-  for (const group of groupedCounts) {
-    switch (group.status) {
-      case 'BACKLOG':
-        counts.backlog = group._count._all;
-        break;
-      case 'IN_PROGRESS':
-        counts.inProgress = group._count._all;
-        break;
-      case 'BLOCKED':
-        counts.blocked = group._count._all;
-        break;
-      case 'REVIEW':
-        counts.review = group._count._all;
-        break;
-      case 'DONE':
-        counts.done = group._count._all;
-        break;
-    }
-  }
-
-  return counts;
-}

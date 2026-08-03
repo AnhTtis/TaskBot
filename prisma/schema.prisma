@@ -28,17 +28,12 @@ enum RequiredRole {
   RESEARCHER
 }
 
-enum DateInputMode {
-  ISO_ONLY
-  VIETNAM_ONLY
-  VIETNAM_OR_ISO
-}
-
 enum TaskEventType {
   TASK_UPDATED
   DEADLINE_SET
   DEADLINE_CLEARED
   ATTACHMENT_ADDED
+  ATTACHMENT_UPDATED
   ATTACHMENT_REMOVED
   REMINDER_SENT
 }
@@ -54,11 +49,9 @@ model GuildConfig {
   secondaryManagerRoleId          String?
   reviewerRoleId                  String?
   secondaryReviewerRoleId         String?
-  maxActiveTasksPerUser           Int           @default(2)
-  defaultThreadAutoArchiveMinutes Int           @default(1440)
-  defaultTimezone                 String        @default("Asia/Ho_Chi_Minh")
-  defaultDateInputMode            DateInputMode @default(VIETNAM_OR_ISO)
-  createdAt                       DateTime      @default(now())
+  maxActiveTasksPerUser           Int      @default(2)
+  defaultThreadAutoArchiveMinutes Int      @default(1440)
+  createdAt                       DateTime @default(now())
   updatedAt                       DateTime      @updatedAt
   tasks                           Task[]
 }

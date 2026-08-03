@@ -1,15 +1,8 @@
-import { ChannelType, type Guild, type TextChannel } from 'discord.js';
+import type { Guild } from 'discord.js';
 
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
-
-function isTextChannel(channel: unknown): channel is TextChannel {
-  return (
-    typeof channel === 'object' &&
-    channel !== null &&
-    (channel as { type?: number }).type === ChannelType.GuildText
-  );
-}
+import { isGuildTextChannel } from './task.helpers.js';
 
 export async function sendTaskFeedMessage(options: {
   readonly guild: Guild;
@@ -29,7 +22,7 @@ export async function sendTaskFeedMessage(options: {
     return null;
   });
 
-  if (!isTextChannel(feedChannel)) {
+  if (!isGuildTextChannel(feedChannel)) {
     logger.warn('Configured task feed channel is unavailable or not a text channel.', {
       guildId: options.guild.id,
       feedChannelId: guildConfig.feedChannelId,

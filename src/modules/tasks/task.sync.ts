@@ -21,6 +21,7 @@ import {
   buildTaskCardEmbed,
 } from './task.renderer.js';
 import { sendTaskFeedMessage } from './task.feed.js';
+import { isGuildTextChannel } from './task.helpers.js';
 import {
   findTaskByCodeWithMembers,
   listTasksForDashboardSummary,
@@ -54,14 +55,6 @@ function isPublicThreadChannel(channel: unknown): channel is PublicThreadChannel
     typeof channel === 'object' &&
     channel !== null &&
     (channel as { type?: number }).type === ChannelType.PublicThread
-  );
-}
-
-function isGuildTextChannel(channel: unknown): channel is TextChannel {
-  return (
-    typeof channel === 'object' &&
-    channel !== null &&
-    (channel as { type?: number }).type === ChannelType.GuildText
   );
 }
 

@@ -1,5 +1,4 @@
 import type {
-  AutocompleteInteraction,
   ButtonInteraction,
   ChatInputCommandInteraction,
   Interaction,
@@ -18,11 +17,6 @@ export async function routeInteraction(interaction: Interaction): Promise<void> 
   try {
     if (interaction.isChatInputCommand()) {
       await handleChatInputCommand(interaction);
-      return;
-    }
-
-    if (interaction.isAutocomplete()) {
-      await handleAutocompleteInteraction(interaction);
       return;
     }
 
@@ -76,12 +70,6 @@ async function handleChatInputCommand(
       });
     }
   }
-}
-
-async function handleAutocompleteInteraction(
-  interaction: AutocompleteInteraction,
-): Promise<void> {
-  await interaction.respond([]);
 }
 
 async function handleButtonInteraction(

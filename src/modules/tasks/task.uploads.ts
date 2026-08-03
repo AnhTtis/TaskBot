@@ -1,15 +1,19 @@
-import { ChannelType, type Guild, type Message, type TextChannel } from 'discord.js';
+import type { Guild, Message, TextChannel } from 'discord.js';
 import type { GuildConfig } from '@prisma/client';
 
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
-import { refreshDashboardSummary } from '../guild-config/guild-config.service.js';
+import {
+  formatAttachmentLabel,
+  isGuildTextChannel,
+  normalizeOptionalText,
+} from './task.helpers.js';
+import { refreshTaskPresentation } from './task.refresh.js';
 import {
   createTaskAttachment,
   createTaskEvent,
   findTaskByIdWithMembers,
 } from './task.repository.js';
-import { syncTaskCardMessage } from './task.sync.js';
 
 const PENDING_UPLOAD_TTL_MS = 10 * 60 * 1000;
 
@@ -25,35 +29,6 @@ const pendingFileUploads = new Map<string, PendingFileUpload>();
 
 function buildPendingUploadKey(guildId: string, userId: string): string {
   return `${guildId}:${userId}`;
-}
-
-function normalizeOptionalText(value: string | null): string | null {
-  const trimmed = value?.trim() ?? '';
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function formatAttachmentLabel(options: {
-  readonly id: number;
-  readonly fileName?: string | null;
-  readonly label?: string | null;
-  readonly url: string;
-}): string {
-  const fileName = options.fileName?.trim();
-  const label = options.label?.trim();
-
-  if (fileName && label) {
-    return `${fileName} — ${label}`;
-  }
-
-  return fileName || label || options.url || `Attachment #${options.id}`;
-}
-
-function isGuildTextChannel(channel: unknown): channel is TextChannel {
-  return (
-    typeof channel === 'object' &&
-    channel !== null &&
-    (channel as { type?: number }).type === ChannelType.GuildText
-  );
 }
 
 async function resolveDashboardChannel(guild: Guild, guildConfig: GuildConfig): Promise<TextChannel | null> {
@@ -158,17 +133,12 @@ export async function handlePendingTaskFileUpload(message: Message): Promise<voi
   });
 
   try {
-    await syncTaskCardMessage({
-      task: updatedTask,
+    await refreshTaskPresentation({
       guild: message.guild,
       guildConfig,
-    });
-    await refreshDashboardSummary({
-      guildId: message.guildId,
-      guildName: message.guild.name,
-      refreshedByUserId: message.author.id,
       dashboardChannel,
-      guildConfig,
+      refreshedByUserId: message.author.id,
+      task: updatedTask,
     });
   } catch (error) {
     logger.error('Task attachment upload refresh failed', {
