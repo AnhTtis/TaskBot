@@ -409,15 +409,15 @@ export function buildCreateTaskModal(): ModalBuilder {
           .setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId('deadline')
-          .setLabel('Deadline (optional)')
-          .setPlaceholder('dd/MM/yyyy HH:mm')
+          .setCustomId('priority')
+          .setLabel('Priority')
+          .setPlaceholder('LOW / MEDIUM / HIGH / URGENT')
           .setStyle(TextInputStyle.Short)
           .setRequired(false),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
       ),
     );
 }

@@ -1570,16 +1570,16 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     return;
   }
 
-  const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
-  if (!teamSize || teamSize > 10) {
-    await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
+  const priorityInput = normalizeOptionalText(interaction.fields.getTextInputValue('priority'));
+  const priority = priorityInput ? parsePriorityInput(priorityInput) : null;
+  if (priorityInput && !priority) {
+    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
     return;
   }
 
-  const deadlineInput = normalizeOptionalText(interaction.fields.getTextInputValue('deadline'));
-  const deadlineAt = deadlineInput ? parseDeadlineInput(deadlineInput) : null;
-  if (deadlineInput && !deadlineAt) {
-    await interaction.editReply({ content: `Invalid deadline. ${getDeadlineInputHint()}` });
+  const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
+  if (!teamSize || teamSize > 10) {
+    await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
     return;
   }
 
@@ -1590,8 +1590,8 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     title: interaction.fields.getTextInputValue('title').trim(),
     description: interaction.fields.getTextInputValue('description').trim(),
     requiredRole,
+    ...(priority ? { priority } : {}),
     createdByDiscordUserId: interaction.user.id,
-    deadlineAt,
     targetMemberCount: teamSize,
   });
 
@@ -1618,7 +1618,7 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     notice: [
       `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
       'Next steps:',
-      '1. Check **Deadline** to confirm or clear the due date.',
+      '1. Check **Deadline** to set the due date after creation.',
       '2. Open **Attachments** to review current files/links.',
       '3. From **Attachments**, use **Upload File** or **Add URL** for the guided slash-command path.',
       '4. Use the attachment rows there to fix or delete existing items.',

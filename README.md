@@ -99,8 +99,10 @@ Manager bấm `Create Task` để mở modal tạo task cơ bản:
 - title
 - description
 - required role
+- priority *(optional, mặc định sẽ là MEDIUM nếu để trống)*
 - team size
-- deadline *(optional)*
+
+> Do giới hạn 5 field của Discord modal, `deadline` được set ngay sau đó trong `Edit Task`.
 
 ### Bước 2: Edit Task ngay sau khi tạo
 Sau khi tạo xong, bot mở ngay `Edit Task`.
