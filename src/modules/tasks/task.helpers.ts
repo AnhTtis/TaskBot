@@ -145,9 +145,6 @@ export function formatAttachmentLabel(options: {
 }): string {
   const fileName = options.fileName?.trim();
   const label = options.label?.trim();
-  if (fileName && label) {
-    return `${fileName} — ${label}`;
-  }
 
   return fileName || label || options.url || `Attachment #${options.id}`;
 }

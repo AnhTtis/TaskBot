@@ -6,6 +6,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   type ButtonInteraction,
+  type InteractionEditReplyOptions,
   type ModalSubmitInteraction,
   type RepliableInteraction,
   type StringSelectMenuInteraction,
@@ -96,12 +97,36 @@ function buildPrivatePanelKey(interaction: RepliableInteraction): string | null 
   return `${interaction.guildId}:${interaction.user.id}`;
 }
 
+async function deleteTrackedPrivatePanel(interaction: RepliableInteraction): Promise<void> {
+  const privatePanelKey = buildPrivatePanelKey(interaction);
+  const previousMessageId = privatePanelKey ? lastPrivateTaskPanelByUser.get(privatePanelKey) : null;
+  if (!privatePanelKey || !previousMessageId) {
+    return;
+  }
+
+  await interaction.webhook.deleteMessage(previousMessageId).catch(() => null);
+  lastPrivateTaskPanelByUser.delete(privatePanelKey);
+}
+
+async function editTrackedPrivateReply(
+  interaction: RepliableInteraction,
+  payload: InteractionEditReplyOptions,
+) {
+  const reply = await interaction.editReply(payload);
+  const privatePanelKey = buildPrivatePanelKey(interaction);
+  if (privatePanelKey) {
+    lastPrivateTaskPanelByUser.set(privatePanelKey, reply.id);
+  }
+
+  return reply;
+}
+
 async function sendInteractionMessage(
   interaction: RepliableInteraction,
   content: string,
 ): Promise<void> {
   if (interaction.deferred) {
-    await interaction.editReply({ content });
+    await editTrackedPrivateReply(interaction, { content });
     return;
   }
 
@@ -132,15 +157,7 @@ async function deferEphemeral(interaction: RepliableInteraction): Promise<void> 
     return;
   }
 
-  if (interaction.isButton()) {
-    const privatePanelKey = buildPrivatePanelKey(interaction);
-    const previousMessageId = privatePanelKey ? lastPrivateTaskPanelByUser.get(privatePanelKey) : null;
-    if (previousMessageId) {
-      await interaction.webhook.deleteMessage(previousMessageId).catch(() => null);
-      lastPrivateTaskPanelByUser.delete(privatePanelKey!);
-    }
-  }
-
+  await deleteTrackedPrivatePanel(interaction);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 }
 
@@ -237,15 +254,10 @@ async function showTaskPanelReply(options: {
     notice: options.notice ?? null,
   });
 
-  const reply = await options.interaction.editReply({
+  await editTrackedPrivateReply(options.interaction, {
     content: null,
     ...payload,
   });
-
-  const privatePanelKey = buildPrivatePanelKey(options.interaction);
-  if (privatePanelKey) {
-    lastPrivateTaskPanelByUser.set(privatePanelKey, reply.id);
-  }
 }
 
 function buildBlockModal(taskId: number): ModalBuilder {
@@ -1301,7 +1313,7 @@ async function handleDashboardButtonInteraction(
         taskCode: null,
       });
 
-      await interaction.editReply({
+      await editTrackedPrivateReply(interaction, {
         content: [
           `Dashboard reloaded for **${interaction.guild.name}**.`,
           `Summary recreated: ${result.summaryRecreated ? 'Yes' : 'No'}`,
@@ -1330,7 +1342,7 @@ async function handleDashboardButtonInteraction(
         )
         .setFooter({ text: 'Open a task card and use its private controls to review a specific task.' });
 
-      await interaction.editReply({ embeds: [embed], components: [] });
+      await editTrackedPrivateReply(interaction, { embeds: [embed], components: [] });
       return;
     }
     case 'my-tasks': {
@@ -1351,7 +1363,7 @@ async function handleDashboardButtonInteraction(
         )
         .setFooter({ text: 'Open a task card and use its private controls for task-specific actions.' });
 
-      await interaction.editReply({ embeds: [embed], components: [] });
+      await editTrackedPrivateReply(interaction, { embeds: [embed], components: [] });
       return;
     }
     default:

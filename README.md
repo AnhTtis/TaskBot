@@ -123,7 +123,7 @@ Trong editor này sẽ có:
 
 Manager nên chọn lại role/priority/deadline ngay trong editor trước khi giao task cho contributor.
 
-Task summary/editor sẽ là phần chính; các hướng dẫn tiếp theo sẽ nằm **trong editor**, không bị hiện lộn lên trước task nữa.
+Các hướng dẫn tiếp theo sẽ nằm **trong editor/private panel**. Khi mở panel mới, bot sẽ cố thay panel private trước đó thay vì để nhiều cửa sổ trôi cùng lúc.
 
 ---
 
@@ -256,6 +256,7 @@ Khi cần upload file trực tiếp kiểu cũ:
 - File attachment hiển thị ưu tiên theo `fileName`
 - Bot **không chủ động đổi tên file**
 - Bot **không chủ động bỏ dấu tiếng Việt**
+- Trong private panel/editor, bot ưu tiên hiện **tên file gốc** để tránh cảm giác bị rename
 - Label/note là metadata riêng, không thay thế tên file gốc
 
 ---
