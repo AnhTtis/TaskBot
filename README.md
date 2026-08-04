@@ -96,23 +96,32 @@ Ngay dưới summary dashboard sẽ có các nút:
 
 ### Bước 1: Create Task
 Manager bấm `Create Task` để mở modal tạo task cơ bản:
-- title
-- description
-- required role
-- priority *(optional, mặc định sẽ là MEDIUM nếu để trống)*
-- team size
+- Title
+- Description
+- Team Size
 
-> Do giới hạn 5 field của Discord modal, `deadline` được set ngay sau đó trong `Edit Task`.
+> Modal tạo task giờ được giữ gọn để giảm nhập tay. Sau khi tạo xong, bot sẽ mở ngay editor để chọn `Required Role`, `Priority`, và `Deadline` bằng control trực quan hơn.
 
 ### Bước 2: Edit Task ngay sau khi tạo
 Sau khi tạo xong, bot mở ngay `Edit Task`.
 
 Trong editor này sẽ có:
+- Dropdown `Required Role`
+- Dropdown `Priority`
+- Dropdown `Deadline Preset`
+- `Custom Deadline`
 - `Edit Details`
-- `Deadline`
 - `Attachments`
 - `Overview`
 - `Exit`
+
+### Mặc định an toàn lúc vừa tạo
+Để tránh task bị claim sai trước khi manager chỉnh xong:
+- `Required Role` mặc định là `RESEARCHER`
+- `Priority` mặc định là `MEDIUM`
+- `Deadline` mặc định là chưa đặt
+
+Manager nên chọn lại role/priority/deadline ngay trong editor trước khi giao task cho contributor.
 
 Task summary/editor sẽ là phần chính; các hướng dẫn tiếp theo sẽ nằm **trong editor**, không bị hiện lộn lên trước task nữa.
 
@@ -155,39 +164,42 @@ Lưu ý:
 Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp với task state và quyền của người bấm.
 
 ### `BACKLOG`
-- contributor đủ role có thể `Claim`
-- manager có nút `Edit Task`
-- trong `Edit Task` sẽ có:
+- Contributor đủ role có thể `Claim`
+- Manager có nút `Edit Task`
+- Trong `Edit Task` sẽ có:
+  - Dropdown `Required Role`
+  - Dropdown `Priority`
+  - Dropdown `Deadline Preset`
+  - `Custom Deadline`
   - `Edit Details`
-  - `Deadline`
   - `Attachments`
   - `Overview`
   - `Exit`
 
 ### `IN_PROGRESS`
-- người làm task sẽ thấy nút `Done`
-- manager/admin sẽ thấy:
+- Người làm task sẽ thấy nút `Done`
+- Manager/admin sẽ thấy:
   - `Edit Task`
   - `Block`
-- nếu một người **vừa là task member vừa là admin/manager**, họ vẫn sẽ thấy `Done` vì họ là người làm task
-- người khác nếu đủ role và còn slot có thể `Join Task`
-- khi người làm bấm `Done`, task chuyển sang `REVIEW`
+- Nếu một người **vừa là task member vừa là admin/manager**, họ vẫn sẽ thấy `Done` vì họ là người làm task
+- Người khác nếu đủ role và còn slot có thể `Join Task`
+- Khi người làm bấm `Done`, task chuyển sang `REVIEW`
 
 ### `BLOCKED`
-- task member / manager có thể `Unblock`
-- manager vẫn có `Edit Task`
+- Task member / manager có thể `Unblock`
+- Manager vẫn có `Edit Task`
 
 ### `REVIEW`
-- reviewer / manager có thể:
+- Reviewer / manager có thể:
   - `Approve`
   - `Request Changes`
-- manager vẫn có `Edit Task` nếu cần chỉnh metadata/deadline/attachment
-- trạng thái này xuất hiện sau khi người làm bấm `Done`
-- nếu người đó cũng là admin/reviewer thì lúc này họ sẽ thấy `Approve`
+- Manager vẫn có `Edit Task` nếu cần chỉnh metadata/deadline/attachment
+- Trạng thái này xuất hiện sau khi người làm bấm `Done`
+- Nếu người đó cũng là admin/reviewer thì lúc này họ sẽ thấy `Approve`
 
 ### `DONE`
-- reviewer / manager có thể `Reopen`
-- nếu có `archive_channel`, task card completed sẽ được chuyển sang archive channel
+- Reviewer / manager có thể `Reopen`
+- Nếu có `archive_channel`, task card completed sẽ được chuyển sang archive channel
 
 ### Tối ưu nút
 Bot sẽ cố cập nhật lại:
@@ -204,47 +216,47 @@ Ngoài ra, các panel chính đều nên có `Exit` để đỡ rườm rà khi 
 Attachment không còn rải ra thành nhiều nút ở editor chính nữa.
 
 ### Trong `Edit Task`
-- bấm `Attachments`
-- bot mở panel attachment riêng
+- Bấm `Attachments`
+- Bot mở panel attachment riêng
 
 ### Panel `Attachments`
 Panel này sẽ:
-- hiển thị danh sách attachment hiện tại bằng **tên file/link dễ đọc**
-- có nút hướng dẫn:
+- Hiển thị danh sách attachment hiện tại bằng **tên file/link dễ đọc**
+- Có nút hướng dẫn:
   - `Upload File`
   - `Add URL`
-- có nút theo từng attachment để:
+- Có nút theo từng attachment để:
   - `⚙️ Fix ...`
   - `✖️ X ...`
-- có:
+- Có:
   - `Back`
   - `Exit`
 
-### Upload file như trước
+### Upload File như trước
 Khi cần upload file trực tiếp kiểu cũ:
-- dùng `/task add-attachment`
-- chọn task từ list suggestion hoặc tự nhập `TASK-xxx`
-- upload file trực tiếp vào attachment field của command
-- có thể thêm note/label nếu muốn
+- Dùng `/task add-attachment`
+- Chọn task từ list suggestion hoặc tự nhập `TASK-xxx`
+- Upload file trực tiếp vào attachment field của command
+- Có thể thêm note/label nếu muốn
 
 ### Add URL
-- cũng dùng `/task add-attachment`
-- không upload file
-- điền `url`
-- có thể thêm `label`
+- Cũng dùng `/task add-attachment`
+- Không upload file
+- Điền `url`
+- Có thể thêm `label`
 
 ### Chỉnh attachment hiện có
-- trong panel `Attachments`, mỗi attachment có nút:
+- Trong panel `Attachments`, mỗi attachment có nút:
   - `⚙️` để sửa
   - `✖️` để xóa
-- với file attachment: `⚙️` cho phép sửa note/label
-- với link attachment: `⚙️` cho phép sửa URL và label
+- Với file attachment: `⚙️` cho phép sửa note/label
+- Với link attachment: `⚙️` cho phép sửa URL và label
 
 ### Nguyên tắc tên file
-- file attachment hiển thị ưu tiên theo `fileName`
-- bot **không chủ động đổi tên file**
-- bot **không chủ động bỏ dấu tiếng Việt**
-- label/note là metadata riêng, không thay thế tên file gốc
+- File attachment hiển thị ưu tiên theo `fileName`
+- Bot **không chủ động đổi tên file**
+- Bot **không chủ động bỏ dấu tiếng Việt**
+- Label/note là metadata riêng, không thay thế tên file gốc
 
 ---
 
@@ -347,11 +359,11 @@ Sau khi bot vào server, chạy:
 - `thread_auto_archive_minutes`
 
 ### Kết quả sau `/setup`
-- bot lưu config vào DB
-- bot luôn dùng giờ Việt Nam `GMT+7`
-- bot luôn nhận deadline theo format `dd/MM/yyyy HH:mm`
-- bot tạo/update summary dashboard
-- summary dashboard sẽ có các nút:
+- Bot lưu config vào DB
+- Bot luôn dùng giờ Việt Nam `GMT+7`
+- Bot luôn nhận deadline theo format `dd/MM/yyyy HH:mm`
+- Bot tạo/update summary dashboard
+- Summary dashboard sẽ có các nút:
   - `My Tasks`
   - `Review Queue`
   - `Create Task`
@@ -363,17 +375,20 @@ Sau khi bot vào server, chạy:
 
 ## 6.1. Manager
 Manager thường làm các việc:
-1. vào `#task-dashboard`
-2. bấm `Create Task` để tạo task mới
-3. sau khi tạo, bot mở ngay `Edit Task`
-4. trong `Edit Task`:
-   - bấm `Deadline` để nhập/sửa/xóa hạn chót
-   - bấm `Attachments` để mở panel attachment
-   - từ đó dùng `/task add-attachment` nếu cần upload file hoặc thêm URL
-   - dùng `⚙️` để sửa attachment hiện có
-   - dùng `✖️` để xóa attachment hiện có
-5. mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
-6. nếu Discord state lệch, bấm `Reload Dashboard`
+1. Vào `#task-dashboard`
+2. Bấm `Create Task` để tạo task mới
+3. Sau khi tạo, bot mở ngay `Edit Task`
+4. Trong `Edit Task`:
+   - Chọn `Required Role` bằng dropdown
+   - Chọn `Priority` bằng dropdown
+   - Chọn `Deadline Preset` hoặc bấm `Custom Deadline` để nhập giờ chính xác
+   - Bấm `Edit Details` nếu cần sửa title/description/team size
+   - Bấm `Attachments` để mở panel attachment
+   - Từ đó dùng `/task add-attachment` nếu cần upload file hoặc thêm URL
+   - Dùng `⚙️` để sửa attachment hiện có
+   - Dùng `✖️` để xóa attachment hiện có
+5. Mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
+6. Nếu Discord state lệch, bấm `Reload Dashboard`
 
 ## 6.2. Contributor
 Contributor thường làm các việc:

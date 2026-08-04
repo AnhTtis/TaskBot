@@ -3,6 +3,7 @@ import type {
   ChatInputCommandInteraction,
   Interaction,
   ModalSubmitInteraction,
+  StringSelectMenuInteraction,
 } from 'discord.js';
 import { DiscordAPIError, MessageFlags } from 'discord.js';
 
@@ -15,6 +16,7 @@ import {
 import {
   handleTaskButtonInteraction,
   handleTaskModalSubmitInteraction,
+  handleTaskSelectMenuInteraction,
 } from '../modules/tasks/task.interactions.js';
 
 export async function routeInteraction(interaction: Interaction): Promise<void> {
@@ -31,6 +33,11 @@ export async function routeInteraction(interaction: Interaction): Promise<void> 
 
     if (interaction.isButton()) {
       await handleButtonInteraction(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      await handleSelectMenuInteraction(interaction);
       return;
     }
 
@@ -101,6 +108,12 @@ async function handleButtonInteraction(
   interaction: ButtonInteraction,
 ): Promise<void> {
   await handleTaskButtonInteraction(interaction);
+}
+
+async function handleSelectMenuInteraction(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
+  await handleTaskSelectMenuInteraction(interaction);
 }
 
 async function handleModalSubmit(

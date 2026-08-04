@@ -115,6 +115,28 @@ export function formatDeadlineForDisplay(deadlineAt: Date | null): string {
   return `${formatDeadlineForInput(deadlineAt)} (${VIETNAM_TIMEZONE_LABEL})`;
 }
 
+export function buildDeadlineFromVietnamPreset(options: {
+  readonly dayOffset: number;
+  readonly hour: number;
+  readonly minute?: number;
+  readonly now?: Date;
+}): Date {
+  const baseDate = options.now ?? new Date();
+  const baseParts = getVietnamDateParts(baseDate);
+
+  return new Date(
+    Date.UTC(
+      baseParts.year,
+      baseParts.month - 1,
+      baseParts.day + options.dayOffset,
+      options.hour - VIETNAM_TIMEZONE_OFFSET_HOURS,
+      options.minute ?? 0,
+      0,
+      0,
+    ),
+  );
+}
+
 export function getCurrentTimeForDisplay(now: Date = new Date()): string {
   return formatDeadlineForDisplay(now);
 }

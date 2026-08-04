@@ -4,15 +4,26 @@ import {
   ButtonStyle,
   EmbedBuilder,
   ModalBuilder,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
 import type { GuildConfig } from '@prisma/client';
 
-import { formatDeadlineForInput } from '../../lib/task-datetime.js';
+import {
+  buildDeadlineFromVietnamPreset,
+  formatDeadlineForDisplay,
+  formatDeadlineForInput,
+} from '../../lib/task-datetime.js';
 import { hasTaskMember, taskNeedsMoreMembers } from './task.members.js';
 import { getManagerRoleIds, getReviewerRoleIds } from './task.policy.js';
-import { formatAttachmentLabel, formatRoleMentions } from './task.helpers.js';
+import {
+  formatAttachmentLabel,
+  formatRoleMentions,
+  priorityOptions,
+  requiredRoleOptions,
+  taskDeadlinePresetOptions,
+} from './task.helpers.js';
 import type { TaskWithMembers } from './task.types.js';
 
 export type TaskPanelMode = 'overview' | 'edit' | 'attachments';
@@ -47,6 +58,67 @@ function withNotice(embed: EmbedBuilder, notice?: string | null): EmbedBuilder {
 
 function truncateLabel(value: string, maxLength = 70): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+function buildRoleSelectRow(task: TaskWithMembers): ActionRowBuilder<StringSelectMenuBuilder> {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`task:set-role:${task.id}`)
+      .setPlaceholder('Choose required role')
+      .addOptions(
+        requiredRoleOptions.map((option) => ({
+          label: option.label,
+          value: option.value,
+          description: option.description,
+          default: task.requiredRole === option.value,
+        })),
+      ),
+  );
+}
+
+function buildPrioritySelectRow(task: TaskWithMembers): ActionRowBuilder<StringSelectMenuBuilder> {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`task:set-priority:${task.id}`)
+      .setPlaceholder('Choose priority')
+      .addOptions(
+        priorityOptions.map((option) => ({
+          label: option.label,
+          value: option.value,
+          description: option.description,
+          default: task.priority === option.value,
+        })),
+      ),
+  );
+}
+
+function buildDeadlinePresetSelectRow(task: TaskWithMembers): ActionRowBuilder<StringSelectMenuBuilder> {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`task:set-deadline-preset:${task.id}`)
+      .setPlaceholder(
+        task.deadlineAt
+          ? `Current deadline: ${formatDeadlineForInput(task.deadlineAt)}`
+          : 'Choose a deadline preset',
+      )
+      .addOptions(
+        taskDeadlinePresetOptions.map((option) => ({
+          label: option.label,
+          value: option.value,
+          description: formatDeadlineForInput(
+            buildDeadlineFromVietnamPreset({
+              dayOffset: option.dayOffset,
+              hour: option.hour,
+              minute: option.minute,
+            }),
+          ),
+        })).concat({
+          label: 'Clear deadline',
+          value: 'clear',
+          description: 'Remove the current due date.',
+        }),
+      ),
+  );
 }
 
 function buildTaskOverviewPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>): EmbedBuilder {
@@ -237,7 +309,9 @@ function buildTaskEditPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>)
           : 'Manager-only task editor for live task maintenance.',
         '',
         `Title: **${task.title}**`,
-        `Deadline: **${formatDeadlineForInput(task.deadlineAt ?? null) || 'Not set'}**`,
+        `Required Role: **${task.requiredRole}**`,
+        `Priority: **${task.priority}**`,
+        `Deadline: **${formatDeadlineForDisplay(task.deadlineAt ?? null)}**`,
         `Attachments: **${task.attachments.length}**`,
       ].join('\n'))
       .addFields({
@@ -245,16 +319,19 @@ function buildTaskEditPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>)
         value: attachmentLines.join('\n'),
         inline: false,
       })
-      .setFooter({ text: 'Use Attachments to upload, replace, or remove files/links. Use Exit to close.' })
+      .setFooter({ text: 'Use the dropdowns for role, priority, and deadline presets. Use Custom Deadline for exact times.' })
       .setTimestamp(task.updatedAt),
     notice,
   );
 }
 
-function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>): Array<ActionRowBuilder<ButtonBuilder>> {
+function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>) {
   const { task } = options;
 
   return [
+    buildRoleSelectRow(task),
+    buildPrioritySelectRow(task),
+    buildDeadlinePresetSelectRow(task),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`task:edit-details:${task.id}`)
@@ -262,8 +339,8 @@ function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mo
         .setEmoji('⚙️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
-        .setCustomId(`task:set-deadline:${task.id}`)
-        .setLabel('Deadline')
+        .setCustomId(`task:deadline-custom:${task.id}`)
+        .setLabel('Custom Deadline')
         .setEmoji('🗓️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
@@ -392,7 +469,7 @@ export function buildTaskPanelPayload(options: TaskPanelPayloadOptions) {
 export function buildCreateTaskModal(): ModalBuilder {
   return new ModalBuilder()
     .setCustomId('task:create-modal')
-    .setTitle('Create task')
+    .setTitle('Create Task')
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId('title').setLabel('Title').setStyle(TextInputStyle.Short).setMaxLength(120).setRequired(true),
@@ -401,23 +478,7 @@ export function buildCreateTaskModal(): ModalBuilder {
         new TextInputBuilder().setCustomId('description').setLabel('Description').setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('required_role')
-          .setLabel('Required role')
-          .setPlaceholder('ADMIN / TECHNICIAN / RESEARCHER')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('priority')
-          .setLabel('Priority')
-          .setPlaceholder('LOW / MEDIUM / HIGH / URGENT')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team Size').setStyle(TextInputStyle.Short).setValue('1').setRequired(true),
       ),
     );
 }
@@ -434,13 +495,7 @@ export function buildEditTaskModal(task: TaskWithMembers): ModalBuilder {
         new TextInputBuilder().setCustomId('description').setLabel('Description').setStyle(TextInputStyle.Paragraph).setValue(task.description).setMaxLength(4000).setRequired(true),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('required_role').setLabel('Required role').setStyle(TextInputStyle.Short).setValue(task.requiredRole).setRequired(true),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('priority').setLabel('Priority').setStyle(TextInputStyle.Short).setValue(task.priority).setRequired(true),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('team_size').setLabel('Team size').setStyle(TextInputStyle.Short).setValue(String(task.targetMemberCount)).setRequired(true),
+        new TextInputBuilder().setCustomId('team_size').setLabel('Team Size').setStyle(TextInputStyle.Short).setValue(String(task.targetMemberCount)).setRequired(true),
       ),
     );
 }

@@ -8,10 +8,16 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
   type RepliableInteraction,
+  type StringSelectMenuInteraction,
   type TextChannel,
 } from 'discord.js';
 
-import { getDeadlineInputHint, parseDeadlineInput } from '../../lib/task-datetime.js';
+import {
+  buildDeadlineFromVietnamPreset,
+  formatDeadlineForInput,
+  getDeadlineInputHint,
+  parseDeadlineInput,
+} from '../../lib/task-datetime.js';
 import { logger } from '../../lib/logger.js';
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
 import { refreshDashboardSummary } from '../guild-config/guild-config.service.js';
@@ -54,6 +60,7 @@ import {
   updateTaskWithMembers,
 } from './task.repository.js';
 import {
+  findTaskDeadlinePreset,
   formatAttachmentLabel,
   formatRoleMentions,
   formatTaskCode,
@@ -76,7 +83,7 @@ import {
   type TaskPanelMode,
 } from './task.ui.js';
 
-type TaskInteraction = ButtonInteraction | ModalSubmitInteraction;
+type TaskInteraction = ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction;
 type ResolvedTask = NonNullable<Awaited<ReturnType<typeof findTaskByIdWithMembers>>>;
 
 const lastPrivateTaskPanelByUser = new Map<string, string>();
@@ -118,7 +125,7 @@ async function deferEphemeral(interaction: RepliableInteraction): Promise<void> 
   }
 
   if (
-    interaction.isButton()
+    interaction.isMessageComponent()
     && interaction.message.flags.has(MessageFlags.Ephemeral)
   ) {
     await interaction.deferUpdate();
@@ -332,6 +339,7 @@ export async function handleTaskButtonInteraction(
       await handleEditTaskPrompt(interaction, taskId);
       return;
     case 'set-deadline':
+    case 'deadline-custom':
       await handleSetDeadlinePrompt(interaction, taskId);
       return;
     case 'attachment-edit':
@@ -352,6 +360,39 @@ export async function handleTaskButtonInteraction(
         flags: MessageFlags.Ephemeral,
       });
     }
+}
+
+export async function handleTaskSelectMenuInteraction(
+  interaction: StringSelectMenuInteraction,
+): Promise<void> {
+  const [namespace, action, taskIdPart] = interaction.customId.split(':');
+
+  if (namespace !== 'task' || !action || !taskIdPart) {
+    await interaction.reply({
+      content: `Unsupported task selector: ${interaction.customId}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const taskId = Number.parseInt(taskIdPart, 10);
+
+  switch (action) {
+    case 'set-role':
+      await handleSetRoleSelectionInteraction(interaction, taskId);
+      return;
+    case 'set-priority':
+      await handleSetPrioritySelectionInteraction(interaction, taskId);
+      return;
+    case 'set-deadline-preset':
+      await handleSetDeadlinePresetInteraction(interaction, taskId);
+      return;
+    default:
+      await interaction.reply({
+        content: `Task selector ${action} is not implemented yet.`,
+        flags: MessageFlags.Ephemeral,
+      });
+  }
 }
 
 export async function handleTaskModalSubmitInteraction(
@@ -1432,6 +1473,188 @@ async function handleTaskExitInteraction(interaction: ButtonInteraction): Promis
   });
 }
 
+async function handleSetRoleSelectionInteraction(
+  interaction: StringSelectMenuInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can change the required role.' });
+    return;
+  }
+
+  const requiredRole = parseRequiredRoleInput(interaction.values[0] ?? '');
+  if (!requiredRole) {
+    await interaction.editReply({ content: 'Required role must be ADMIN, TECHNICIAN, or RESEARCHER.' });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(task.id, { requiredRole });
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'TASK_UPDATED',
+    summary: 'Manager updated the required role.',
+    details: `Required role: ${requiredRole}`,
+  });
+
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit',
+    notice: `Required role updated to **${requiredRole}** on **${updatedTask.taskCode}**.`,
+  });
+}
+
+async function handleSetPrioritySelectionInteraction(
+  interaction: StringSelectMenuInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can change task priority.' });
+    return;
+  }
+
+  const priority = parsePriorityInput(interaction.values[0] ?? '');
+  if (!priority) {
+    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
+    return;
+  }
+
+  const updatedTask = await updateTaskWithMembers(task.id, { priority });
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'TASK_UPDATED',
+    summary: 'Manager updated task priority.',
+    details: `Priority: ${priority}`,
+  });
+
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit',
+    notice: `Priority updated to **${priority}** on **${updatedTask.taskCode}**.`,
+  });
+}
+
+async function handleSetDeadlinePresetInteraction(
+  interaction: StringSelectMenuInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can set task deadlines.' });
+    return;
+  }
+
+  const selectedValue = interaction.values[0] ?? '';
+  if (selectedValue === 'clear') {
+    const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt: null });
+    await createTaskEvent({
+      taskId: updatedTask.id,
+      actorDiscordUserId: interaction.user.id,
+      type: 'DEADLINE_CLEARED',
+      summary: 'Manager cleared the task deadline.',
+    });
+
+    await finalizeTaskInteraction({
+      interaction,
+      guildId: guild.id,
+      guildName: guild.name,
+      refreshedByUserId: interaction.user.id,
+      dashboardChannel,
+      guildConfig,
+      task: updatedTask,
+    });
+
+    await showTaskPanelReply({
+      interaction,
+      taskId: updatedTask.id,
+      mode: 'edit',
+      notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+    });
+    return;
+  }
+
+  const preset = findTaskDeadlinePreset(selectedValue);
+  if (!preset) {
+    await interaction.editReply({ content: 'That deadline preset is no longer available.' });
+    return;
+  }
+
+  const deadlineAt = buildDeadlineFromVietnamPreset({
+    dayOffset: preset.dayOffset,
+    hour: preset.hour,
+    minute: preset.minute,
+  });
+
+  const updatedTask = await updateTaskWithMembers(task.id, { deadlineAt });
+  await createTaskEvent({
+    taskId: updatedTask.id,
+    actorDiscordUserId: interaction.user.id,
+    type: 'DEADLINE_SET',
+    summary: 'Manager set the task deadline from a preset.',
+    details: formatDeadlineForInput(deadlineAt),
+  });
+
+  await finalizeTaskInteraction({
+    interaction,
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+    task: updatedTask,
+  });
+
+  await showTaskPanelReply({
+    interaction,
+    taskId: updatedTask.id,
+    mode: 'edit',
+    notice: `Deadline updated to **${formatDeadlineForInput(deadlineAt)}** on **${updatedTask.taskCode}**.`,
+  });
+}
+
 async function handleEditTaskPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
   const context = await resolveTaskContext(interaction, taskId);
   if (!context) {
@@ -1564,19 +1787,6 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     return;
   }
 
-  const requiredRole = parseRequiredRoleInput(interaction.fields.getTextInputValue('required_role'));
-  if (!requiredRole) {
-    await interaction.editReply({ content: 'Required role must be ADMIN, TECHNICIAN, or RESEARCHER.' });
-    return;
-  }
-
-  const priorityInput = normalizeOptionalText(interaction.fields.getTextInputValue('priority'));
-  const priority = priorityInput ? parsePriorityInput(priorityInput) : null;
-  if (priorityInput && !priority) {
-    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
-    return;
-  }
-
   const teamSize = parsePositiveIntegerInput(interaction.fields.getTextInputValue('team_size'));
   if (!teamSize || teamSize > 10) {
     await interaction.editReply({ content: 'Team size must be a number between 1 and 10.' });
@@ -1589,8 +1799,8 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     taskCode: formatTaskCode(parseNextTaskSequence(latestTask?.taskCode ?? null)),
     title: interaction.fields.getTextInputValue('title').trim(),
     description: interaction.fields.getTextInputValue('description').trim(),
-    requiredRole,
-    ...(priority ? { priority } : {}),
+    requiredRole: 'RESEARCHER',
+    priority: 'MEDIUM',
     createdByDiscordUserId: interaction.user.id,
     targetMemberCount: teamSize,
   });
@@ -1617,11 +1827,15 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     mode: 'edit',
     notice: [
       `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
+      'Defaults applied until you confirm them here:',
+      '- Required Role: **RESEARCHER**',
+      '- Priority: **MEDIUM**',
+      '- Deadline: **Not set**',
       'Next steps:',
-      '1. Check **Deadline** to set the due date after creation.',
-      '2. Open **Attachments** to review current files/links.',
-      '3. From **Attachments**, use **Upload File** or **Add URL** for the guided slash-command path.',
-      '4. Use the attachment rows there to fix or delete existing items.',
+      '1. Use the role dropdown to choose who can claim the task.',
+      '2. Use the priority dropdown to set urgency.',
+      '3. Use a deadline preset or **Custom Deadline** for an exact time.',
+      '4. Open **Attachments** after that to manage files and links.',
     ].join('\n'),
   });
 }
@@ -1636,18 +1850,6 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
   const { guild, guildConfig, task, dashboardChannel } = context;
   if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
     await interaction.editReply({ content: 'Only configured manager roles can edit task details.' });
-    return;
-  }
-
-  const requiredRole = parseRequiredRoleInput(interaction.fields.getTextInputValue('required_role'));
-  if (!requiredRole) {
-    await interaction.editReply({ content: 'Required role must be ADMIN, TECHNICIAN, or RESEARCHER.' });
-    return;
-  }
-
-  const priority = parsePriorityInput(interaction.fields.getTextInputValue('priority'));
-  if (!priority) {
-    await interaction.editReply({ content: 'Priority must be LOW, MEDIUM, HIGH, or URGENT.' });
     return;
   }
 
@@ -1668,8 +1870,6 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
   const updatedTask = await updateTaskWithMembers(task.id, {
     title,
     description,
-    requiredRole,
-    priority,
     targetMemberCount: teamSize,
   });
 
@@ -1678,7 +1878,7 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
     actorDiscordUserId: interaction.user.id,
     type: 'TASK_UPDATED',
     summary: 'Manager updated task metadata.',
-    details: `Title: ${title} | Role: ${requiredRole} | Priority: ${priority} | Team size: ${teamSize}`,
+    details: `Title: ${title} | Team size: ${teamSize}`,
   });
 
   await finalizeTaskInteraction({
