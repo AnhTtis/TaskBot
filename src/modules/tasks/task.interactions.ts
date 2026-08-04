@@ -7,6 +7,7 @@ import {
   TextInputStyle,
   type ButtonInteraction,
   type InteractionEditReplyOptions,
+  type InteractionReplyOptions,
   type ModalSubmitInteraction,
   type RepliableInteraction,
   type StringSelectMenuInteraction,
@@ -113,6 +114,19 @@ async function editTrackedPrivateReply(
   payload: InteractionEditReplyOptions,
 ) {
   const reply = await interaction.editReply(payload);
+  const privatePanelKey = buildPrivatePanelKey(interaction);
+  if (privatePanelKey) {
+    lastPrivateTaskPanelByUser.set(privatePanelKey, reply.id);
+  }
+
+  return reply;
+}
+
+async function followUpTrackedPrivateReply(
+  interaction: RepliableInteraction,
+  payload: InteractionReplyOptions,
+) {
+  const reply = await interaction.followUp(payload);
   const privatePanelKey = buildPrivatePanelKey(interaction);
   if (privatePanelKey) {
     lastPrivateTaskPanelByUser.set(privatePanelKey, reply.id);
@@ -237,6 +251,7 @@ async function showTaskPanelReply(options: {
   readonly mode?: TaskPanelMode;
   readonly notice?: string;
   readonly closeLabel?: string;
+  readonly delivery?: 'edit' | 'follow_up';
 }): Promise<void> {
   const context = await resolveTaskContext(options.interaction as TaskInteraction, options.taskId);
   if (!context) {
@@ -255,6 +270,15 @@ async function showTaskPanelReply(options: {
     notice: options.notice ?? null,
     closeLabel: options.closeLabel,
   });
+
+  if (options.delivery === 'follow_up') {
+    await options.interaction.deleteReply().catch(() => null);
+    await followUpTrackedPrivateReply(options.interaction, {
+      flags: MessageFlags.Ephemeral,
+      ...payload,
+    });
+    return;
+  }
 
   await editTrackedPrivateReply(options.interaction, {
     content: null,
@@ -1839,6 +1863,7 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     interaction,
     taskId: persistedTask.id,
     mode: 'edit',
+    delivery: 'follow_up',
     closeLabel: 'Done',
     notice: [
       `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
