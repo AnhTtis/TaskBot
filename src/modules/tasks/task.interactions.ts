@@ -236,6 +236,7 @@ async function showTaskPanelReply(options: {
   readonly taskId: number;
   readonly mode?: TaskPanelMode;
   readonly notice?: string;
+  readonly closeLabel?: string;
 }): Promise<void> {
   const context = await resolveTaskContext(options.interaction as TaskInteraction, options.taskId);
   if (!context) {
@@ -252,6 +253,7 @@ async function showTaskPanelReply(options: {
     ),
     mode: options.mode ?? 'overview',
     notice: options.notice ?? null,
+    closeLabel: options.closeLabel,
   });
 
   await editTrackedPrivateReply(options.interaction, {
@@ -1837,17 +1839,23 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     interaction,
     taskId: persistedTask.id,
     mode: 'edit',
+    closeLabel: 'Done',
     notice: [
       `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
-      'Defaults applied until you confirm them here:',
+      'The public task card is now live.',
+      'Use this private editor only to finish tuning the task right after creation.',
+      '',
+      'Current defaults:',
       '- Required Role: **RESEARCHER**',
       '- Priority: **MEDIUM**',
       '- Deadline: **Not set**',
-      'Next steps:',
+      '',
+      'Suggested next steps:',
       '1. Use the role dropdown to choose who can claim the task.',
       '2. Use the priority dropdown to set urgency.',
       '3. Use a deadline preset or **Custom Deadline** for an exact time.',
-      '4. Open **Attachments** after that to manage files and links.',
+      '4. Open **Attachments** if you want to add files or links now.',
+      '5. Press **Done** when you finish this first-round setup.',
     ].join('\n'),
   });
 }

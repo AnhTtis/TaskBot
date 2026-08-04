@@ -42,6 +42,7 @@ type TaskPanelPayloadOptions = {
   readonly access: TaskActionAccess;
   readonly mode: TaskPanelMode;
   readonly notice?: string | null;
+  readonly closeLabel?: string | undefined;
 };
 
 function withNotice(embed: EmbedBuilder, notice?: string | null): EmbedBuilder {
@@ -326,7 +327,7 @@ function buildTaskEditPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>)
 }
 
 function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mode'>) {
-  const { task } = options;
+  const { task, closeLabel } = options;
 
   return [
     buildRoleSelectRow(task),
@@ -357,8 +358,8 @@ function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mo
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`task:exit:${task.id}`)
-        .setLabel('Exit')
-        .setEmoji('✖️')
+        .setLabel(closeLabel ?? 'Exit')
+        .setEmoji(closeLabel ? '✅' : '✖️')
         .setStyle(ButtonStyle.Secondary),
     ),
   ];

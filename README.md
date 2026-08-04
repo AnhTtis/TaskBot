@@ -103,7 +103,10 @@ Manager bấm `Create Task` để mở modal tạo task cơ bản:
 > Modal tạo task giờ được giữ gọn để giảm nhập tay. Sau khi tạo xong, bot sẽ mở ngay editor để chọn `Required Role`, `Priority`, và `Deadline` bằng control trực quan hơn.
 
 ### Bước 2: Edit Task ngay sau khi tạo
-Sau khi tạo xong, bot mở ngay `Edit Task`.
+Sau khi tạo xong, bot sẽ:
+1. Tạo task thật ngay lập tức
+2. Đồng bộ public task card vào dashboard
+3. Mở private editor để manager tinh chỉnh tiếp
 
 Trong editor này sẽ có:
 - Dropdown `Required Role`
@@ -113,7 +116,9 @@ Trong editor này sẽ có:
 - `Edit Details`
 - `Attachments`
 - `Overview`
-- `Exit`
+- `Done`
+
+> `Done` ở màn hình ngay sau khi tạo chỉ có nghĩa là đóng editor sau khi tinh chỉnh xong. Nó **không** hủy task vừa tạo.
 
 ### Mặc định an toàn lúc vừa tạo
 Để tránh task bị claim sai trước khi manager chỉnh xong:
@@ -123,7 +128,7 @@ Trong editor này sẽ có:
 
 Manager nên chọn lại role/priority/deadline ngay trong editor trước khi giao task cho contributor.
 
-Các hướng dẫn tiếp theo sẽ nằm **trong editor/private panel**. Khi mở panel mới, bot sẽ cố thay panel private trước đó thay vì để nhiều cửa sổ trôi cùng lúc.
+Các hướng dẫn tiếp theo sẽ nằm **trong editor/private panel**. Public task card là kết quả tạo task chính; private editor chỉ là bước tinh chỉnh tiếp theo. Khi mở panel mới, bot sẽ cố thay panel private trước đó thay vì để nhiều cửa sổ trôi cùng lúc.
 
 ---
 
@@ -388,6 +393,7 @@ Manager thường làm các việc:
    - Từ đó dùng `/task add-attachment` nếu cần upload file hoặc thêm URL
    - Dùng `⚙️` để sửa attachment hiện có
    - Dùng `✖️` để xóa attachment hiện có
+   - Bấm `Done` khi đã tinh chỉnh xong màn hình hậu tạo task đầu tiên
 5. Mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
 6. Nếu Discord state lệch, bấm `Reload Dashboard`
 
