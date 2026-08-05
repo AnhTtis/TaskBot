@@ -11,14 +11,19 @@ import { findGuildConfigByGuildId } from '../guild-config/guild-config.repositor
 import { refreshTaskPresentation } from './task.refresh.js';
 import {
   formatAttachmentLabel,
+  formatTaskDisplayLabel,
+  formatTaskPublicLabel,
   isGuildTextChannel,
   normalizeOptionalText,
+  parseTaskReferenceInput,
 } from './task.helpers.js';
 import { hasManagementAccess } from './task.policy.js';
 import {
   createTaskAttachment,
   createTaskEvent,
   findTaskByCodeWithMembers,
+  findTaskByIdWithMembers,
+  findTaskByNumberWithMembers,
   listTasksForGuildWithMembers,
 } from './task.repository.js';
 
@@ -105,14 +110,21 @@ export async function handleTaskAutocompleteInteraction(
   const query = String(focusedOption.value ?? '').trim().toLowerCase();
   const tasks = await listTasksForGuildWithMembers(interaction.guildId);
   const suggestions = tasks
-    .filter((task) => query.length === 0
-      || task.taskCode.toLowerCase().includes(query)
-      || task.title.toLowerCase().includes(query))
+    .filter((task) => {
+      const publicLabel = formatTaskPublicLabel(task.taskNumber).toLowerCase();
+      const paddedNumber = task.taskNumber.toString().padStart(4, '0');
+      return query.length === 0
+        || publicLabel.includes(query)
+        || paddedNumber.includes(query)
+        || String(task.taskNumber).includes(query)
+        || task.taskCode.toLowerCase().includes(query)
+        || task.title.toLowerCase().includes(query);
+    })
     .slice(-25)
     .reverse()
     .map((task) => ({
-      name: truncateChoiceLabel(`${task.taskCode} • ${task.title}`),
-      value: task.taskCode,
+      name: truncateChoiceLabel(formatTaskDisplayLabel(task)),
+      value: String(task.taskNumber),
     }));
 
   await interaction.respond(suggestions);
@@ -138,10 +150,16 @@ export async function handleTaskCommand(
   const { guild, guildConfig, dashboardChannel } = context;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const taskCode = interaction.options.getString('task_code', true).trim().toUpperCase();
-  const task = await findTaskByCodeWithMembers(guild.id, taskCode);
+  const taskReferenceInput = interaction.options.getString('task_code', true);
+  const parsedReference = parseTaskReferenceInput(taskReferenceInput);
+  const task = parsedReference.taskNumber
+    ? await findTaskByNumberWithMembers(guild.id, parsedReference.taskNumber)
+    : parsedReference.legacyTaskCode
+      ? await findTaskByCodeWithMembers(guild.id, parsedReference.legacyTaskCode)
+      : null;
+
   if (!task) {
-    await interaction.editReply({ content: `Could not find ${taskCode}.` });
+    await interaction.editReply({ content: `Could not find task reference: ${taskReferenceInput}.` });
     return;
   }
 
@@ -170,9 +188,9 @@ export async function handleTaskCommand(
     addedByDiscordUserId: interaction.user.id,
   });
 
-  const updatedTask = await findTaskByCodeWithMembers(guild.id, taskCode);
+  const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `The attachment was saved, but ${taskCode} could not be reloaded.` });
+    await interaction.editReply({ content: `The attachment was saved, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
     return;
   }
 
@@ -193,6 +211,6 @@ export async function handleTaskCommand(
   });
 
   await interaction.editReply({
-    content: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${updatedTask.taskCode}**.`,
+    content: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }

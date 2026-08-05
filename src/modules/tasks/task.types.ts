@@ -8,7 +8,6 @@ import type {
 
 export type CreateTaskInput = {
   readonly guildId: string;
-  readonly taskCode: string;
   readonly title: string;
   readonly description: string;
   readonly requiredRole: RequiredRole;
@@ -59,7 +58,7 @@ export type DashboardSummaryCounts = {
 };
 
 export const dashboardSummaryTaskSelect = {
-  taskCode: true,
+  taskNumber: true,
   status: true,
   deadlineAt: true,
   targetMemberCount: true,

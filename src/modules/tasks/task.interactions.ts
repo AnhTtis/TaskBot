@@ -52,7 +52,6 @@ import {
   createTask,
   createTaskEvent,
   createTaskStatusHistory,
-  findLatestTaskForGuild,
   findTaskByIdWithMembers,
   listTasksByStatus,
   listTasksForGuildWithMembers,
@@ -65,10 +64,9 @@ import {
   findTaskDeadlinePreset,
   formatAttachmentLabel,
   formatRoleMentions,
-  formatTaskCode,
+  formatTaskPublicLabel,
   isGuildTextChannel,
   normalizeOptionalText,
-  parseNextTaskSequence,
   parsePositiveIntegerInput,
   parsePriorityInput,
   parseRequiredRoleInput,
@@ -522,7 +520,7 @@ async function handleClaimTaskInteraction(
 
   if (!allowedToClaim) {
     await interaction.editReply({
-      content: `You do not have the required role to claim ${task.taskCode}.`,
+      content: `You do not have the required role to claim ${formatTaskPublicLabel(task.taskNumber)}.`,
     });
     return;
   }
@@ -583,7 +581,7 @@ async function handleClaimTaskInteraction(
     await sendTaskFeedMessage({
       guild,
       content: [
-        `⚠️ Workspace repair needed for **${claimedTask.taskCode}**.`,
+        `⚠️ Workspace repair needed for **${formatTaskPublicLabel(claimedTask.taskNumber)}**.`,
         `Team: ${formatTaskTeamMentions(claimedTask)}`,
         'The task is in progress, but the workspace thread could not be created automatically.',
         'Use the Reload Dashboard button after fixing the channel/thread permissions.',
@@ -604,7 +602,8 @@ async function handleClaimTaskInteraction(
   logger.info('Task claimed', {
     guildId: guild.id,
     taskId: updatedTask.id,
-    taskCode: updatedTask.taskCode,
+    taskNumber: updatedTask.taskNumber,
+    taskLabel: formatTaskPublicLabel(updatedTask.taskNumber),
     assigneeDiscordUserId: interaction.user.id,
     threadChannelId,
     threadCreationFailed,
@@ -615,8 +614,8 @@ async function handleClaimTaskInteraction(
     taskId: updatedTask.id,
     mode: 'overview',
     notice: threadCreationFailed
-      ? `You claimed **${updatedTask.taskCode}** and started the task team, but the workspace thread could not be created automatically.`
-      : `You claimed **${updatedTask.taskCode}**. Workspace thread: ${threadChannelId ? `<#${threadChannelId}>` : 'Unavailable'}`,
+      ? `You claimed **${formatTaskPublicLabel(updatedTask.taskNumber)}** and started the task team, but the workspace thread could not be created automatically.`
+      : `You claimed **${formatTaskPublicLabel(updatedTask.taskNumber)}**. Workspace thread: ${threadChannelId ? `<#${threadChannelId}>` : 'Unavailable'}`,
   });
 }
 
@@ -635,21 +634,21 @@ async function handleJoinTaskInteraction(
 
   if (!['IN_PROGRESS', 'BLOCKED'].includes(task.status)) {
     await interaction.editReply({
-      content: `${task.taskCode} cannot be joined in its current state.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} cannot be joined in its current state.`,
     });
     return;
   }
 
   if (!taskNeedsMoreMembers(task)) {
     await interaction.editReply({
-      content: `${task.taskCode} already has enough team members.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} already has enough team members.`,
     });
     return;
   }
 
   if (hasTaskMember(task, interaction.user.id)) {
     await interaction.editReply({
-      content: `You are already on the team for ${task.taskCode}.`,
+      content: `You are already on the team for ${formatTaskPublicLabel(task.taskNumber)}.`,
     });
     return;
   }
@@ -670,7 +669,7 @@ async function handleJoinTaskInteraction(
 
   if (!allowedToJoin) {
     await interaction.editReply({
-      content: `You do not have the required role to join ${task.taskCode}.`,
+      content: `You do not have the required role to join ${formatTaskPublicLabel(task.taskNumber)}.`,
     });
     return;
   }
@@ -686,28 +685,28 @@ async function handleJoinTaskInteraction(
   const joinResult = await addTaskMember(task.id, interaction.user.id);
   if (joinResult.status === 'missing') {
     await interaction.editReply({
-      content: `${task.taskCode} could not be updated because it no longer exists.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} could not be updated because it no longer exists.`,
     });
     return;
   }
 
   if (joinResult.status === 'not_joinable') {
     await interaction.editReply({
-      content: `${joinResult.task.taskCode} cannot be joined in its current state.`,
+      content: `${formatTaskPublicLabel(joinResult.task.taskNumber)} cannot be joined in its current state.`,
     });
     return;
   }
 
   if (joinResult.status === 'already_member') {
     await interaction.editReply({
-      content: `You are already on the team for ${joinResult.task.taskCode}.`,
+      content: `You are already on the team for ${formatTaskPublicLabel(joinResult.task.taskNumber)}.`,
     });
     return;
   }
 
   if (joinResult.status === 'full') {
     await interaction.editReply({
-      content: `${joinResult.task.taskCode} already has enough team members.`,
+      content: `${formatTaskPublicLabel(joinResult.task.taskNumber)} already has enough team members.`,
     });
     return;
   }
@@ -728,7 +727,7 @@ async function handleJoinTaskInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `You joined the team for **${updatedTask.taskCode}**.`,
+    notice: `You joined the team for **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -770,7 +769,7 @@ async function handleBlockTaskSubmit(
 
   if (task.status !== 'IN_PROGRESS') {
     await interaction.editReply({
-      content: `${task.taskCode} is not currently in progress.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} is not currently in progress.`,
     });
     return;
   }
@@ -806,7 +805,7 @@ async function handleBlockTaskSubmit(
 
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before the blocked update could be applied.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before the blocked update could be applied.`,
     });
     return;
   }
@@ -833,7 +832,7 @@ async function handleBlockTaskSubmit(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Marked **${updatedTask.taskCode}** as Blocked.`,
+    notice: `Marked **${formatTaskPublicLabel(updatedTask.taskNumber)}** as Blocked.`,
   });
 }
 
@@ -852,7 +851,7 @@ async function handleUnblockTaskInteraction(
 
   if (task.status !== 'BLOCKED') {
     await interaction.editReply({
-      content: `${task.taskCode} is not currently blocked.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} is not currently blocked.`,
     });
     return;
   }
@@ -879,7 +878,7 @@ async function handleUnblockTaskInteraction(
 
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before the unblock update could be applied.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before the unblock update could be applied.`,
     });
     return;
   }
@@ -910,7 +909,7 @@ async function handleUnblockTaskInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Moved **${updatedTask.taskCode}** back to In Progress.`,
+    notice: `Moved **${formatTaskPublicLabel(updatedTask.taskNumber)}** back to In Progress.`,
   });
 }
 
@@ -929,7 +928,7 @@ async function handleRequestReviewInteraction(
 
   if (task.status !== 'IN_PROGRESS') {
     await interaction.editReply({
-      content: `${task.taskCode} must be In Progress before requesting review.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} must be In Progress before requesting review.`,
     });
     return;
   }
@@ -957,7 +956,7 @@ async function handleRequestReviewInteraction(
 
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before review could be requested.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before review could be requested.`,
     });
     return;
   }
@@ -989,7 +988,7 @@ async function handleRequestReviewInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Moved **${updatedTask.taskCode}** to Review.${reviewerLine}`,
+    notice: `Moved **${formatTaskPublicLabel(updatedTask.taskNumber)}** to Review.${reviewerLine}`,
   });
 }
 
@@ -1008,7 +1007,7 @@ async function handleApproveTaskInteraction(
 
   if (task.status !== 'REVIEW') {
     await interaction.editReply({
-      content: `${task.taskCode} is not waiting for review.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} is not waiting for review.`,
     });
     return;
   }
@@ -1035,7 +1034,7 @@ async function handleApproveTaskInteraction(
 
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before approval could be applied.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before approval could be applied.`,
     });
     return;
   }
@@ -1066,7 +1065,7 @@ async function handleApproveTaskInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Approved **${updatedTask.taskCode}** and marked it Done.`,
+    notice: `Approved **${formatTaskPublicLabel(updatedTask.taskNumber)}** and marked it Done.`,
   });
 }
 
@@ -1085,7 +1084,7 @@ async function handleReturnTaskInteraction(
 
   if (task.status !== 'REVIEW') {
     await interaction.editReply({
-      content: `${task.taskCode} is not waiting for review.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} is not waiting for review.`,
     });
     return;
   }
@@ -1112,7 +1111,7 @@ async function handleReturnTaskInteraction(
 
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before it could be returned to In Progress.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before it could be returned to In Progress.`,
     });
     return;
   }
@@ -1143,7 +1142,7 @@ async function handleReturnTaskInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Returned **${updatedTask.taskCode}** to In Progress.`,
+    notice: `Returned **${formatTaskPublicLabel(updatedTask.taskNumber)}** to In Progress.`,
   });
 }
 
@@ -1162,7 +1161,7 @@ async function handleReopenTaskInteraction(
 
   if (task.status !== 'DONE') {
     await interaction.editReply({
-      content: `${task.taskCode} is not currently done.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} is not currently done.`,
     });
     return;
   }
@@ -1191,7 +1190,7 @@ async function handleReopenTaskInteraction(
 
   if (!reopenedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} changed before it could be reopened.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} changed before it could be reopened.`,
     });
     return;
   }
@@ -1200,7 +1199,7 @@ async function handleReopenTaskInteraction(
   const updatedTask = await findTaskByIdWithMembers(reopenedTask.id);
   if (!updatedTask) {
     await interaction.editReply({
-      content: `${task.taskCode} disappeared while it was being reopened.`,
+      content: `${formatTaskPublicLabel(task.taskNumber)} disappeared while it was being reopened.`,
     });
     return;
   }
@@ -1231,7 +1230,7 @@ async function handleReopenTaskInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'overview',
-    notice: `Reopened **${updatedTask.taskCode}** and moved it back to Backlog.`,
+    notice: `Reopened **${formatTaskPublicLabel(updatedTask.taskNumber)}** and moved it back to Backlog.`,
   });
 }
 
@@ -1336,7 +1335,7 @@ async function handleDashboardButtonInteraction(
         guildConfig,
         dashboardChannel,
         refreshedByUserId: interaction.user.id,
-        taskCode: null,
+        taskNumber: null,
       });
 
       await editTrackedPrivateReply(interaction, {
@@ -1363,7 +1362,7 @@ async function handleDashboardButtonInteraction(
         .setColor(0xfee75c)
         .setDescription(
           reviewTasks.length > 0
-            ? reviewTasks.slice(0, 15).map((task) => `- **${task.taskCode}** — ${task.title}`).join('\n')
+            ? reviewTasks.slice(0, 15).map((task) => `- **${formatTaskPublicLabel(task.taskNumber)}** — ${task.title}`).join('\n')
             : 'There are no tasks waiting for review right now.',
         )
         .setFooter({ text: 'Open a task card and use its private controls to review a specific task.' });
@@ -1384,7 +1383,7 @@ async function handleDashboardButtonInteraction(
         .setColor(0x57f287)
         .setDescription(
           myTasks.length > 0
-            ? myTasks.slice(0, 15).map((task) => `- **${task.taskCode}** — ${task.title} (${task.status})`).join('\n')
+            ? myTasks.slice(0, 15).map((task) => `- **${formatTaskPublicLabel(task.taskNumber)}** — ${task.title} (${task.status})`).join('\n')
             : 'You do not have any active tasks right now.',
         )
         .setFooter({ text: 'Open a task card and use its private controls for task-specific actions.' });
@@ -1464,9 +1463,10 @@ async function handleAttachmentUploadHelpInteraction(
     taskId,
     mode: 'attachments',
     notice: [
-      `Use **/task add-attachment** and choose **${context.task.taskCode}** in the task list or type it manually.`,
-      'Upload the file directly in the command attachment field.',
-      'Optional: fill the note/label field if you want extra context.',
+      `Copy this command: \`/task add-attachment task_code:${context.task.taskNumber}\``,
+      `Target task: **${formatTaskPublicLabel(context.task.taskNumber)}**.`,
+      'Then attach the file in Discord before you send the slash command.',
+      'Optional: fill the label field if you want extra context.',
     ].join('\n'),
   });
 }
@@ -1492,9 +1492,10 @@ async function handleAttachmentLinkHelpInteraction(
     taskId,
     mode: 'attachments',
     notice: [
-      `Use **/task add-attachment** and choose **${context.task.taskCode}** in the task list or type it manually.`,
-      'Paste the URL into the command instead of uploading a file.',
-      'Optional: fill the note/label field if you want extra context.',
+      `Copy this command: \`/task add-attachment task_code:${context.task.taskNumber} url:https://example.com\``,
+      `Target task: **${formatTaskPublicLabel(context.task.taskNumber)}**.`,
+      'Replace the example URL before you send the slash command.',
+      'Optional: fill the label field if you want extra context.',
     ].join('\n'),
   });
 }
@@ -1556,7 +1557,7 @@ async function handleSetRoleSelectionInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Required role updated to **${requiredRole}** on **${updatedTask.taskCode}**.`,
+    notice: `Required role updated to **${requiredRole}** on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -1605,7 +1606,7 @@ async function handleSetPrioritySelectionInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Priority updated to **${priority}** on **${updatedTask.taskCode}**.`,
+    notice: `Priority updated to **${priority}** on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -1649,7 +1650,7 @@ async function handleSetDeadlinePresetInteraction(
       interaction,
       taskId: updatedTask.id,
       mode: 'edit',
-      notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+      notice: `Cleared the deadline for **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
     });
     return;
   }
@@ -1689,7 +1690,7 @@ async function handleSetDeadlinePresetInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Deadline updated to **${formatDeadlineForInput(deadlineAt)}** on **${updatedTask.taskCode}**.`,
+    notice: `Deadline updated to **${formatDeadlineForInput(deadlineAt)}** on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -1764,13 +1765,13 @@ async function handleDeleteAttachmentInteraction(
 
   const removedAttachment = await removeTaskAttachment({ attachmentId, taskId: task.id });
   if (!removedAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${task.taskCode}**.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
   const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} was deleted, but ${task.taskCode} could not be reloaded.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} was deleted, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
     return;
   }
 
@@ -1796,7 +1797,7 @@ async function handleDeleteAttachmentInteraction(
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Deleted attachment #${removedAttachment.id} from **${updatedTask.taskCode}**.`,
+    notice: `Deleted attachment #${removedAttachment.id} from **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -1831,10 +1832,8 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     return;
   }
 
-  const latestTask = await findLatestTaskForGuild(interaction.guild.id);
   const task = await createTask({
     guildId: interaction.guild.id,
-    taskCode: formatTaskCode(parseNextTaskSequence(latestTask?.taskCode ?? null)),
     title: interaction.fields.getTextInputValue('title').trim(),
     description: interaction.fields.getTextInputValue('description').trim(),
     requiredRole: 'RESEARCHER',
@@ -1866,7 +1865,7 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     delivery: 'follow_up',
     closeLabel: 'Done',
     notice: [
-      `Created **${persistedTask.taskCode}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
+      `Created **${formatTaskPublicLabel(persistedTask.taskNumber)}** in <#${persistedTask.taskMessageChannelId ?? dashboardChannel.id}>.`,
       'The public task card is now live.',
       'Use this private editor only to finish tuning the task right after creation.',
       '',
@@ -1940,7 +1939,7 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Updated **${updatedTask.taskCode}** metadata successfully.`,
+    notice: `Updated **${formatTaskPublicLabel(updatedTask.taskNumber)}** metadata successfully.`,
   });
 }
 
@@ -1975,7 +1974,7 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
       interaction,
       taskId: updatedTask.id,
       mode: 'edit',
-      notice: `Cleared the deadline for **${updatedTask.taskCode}**.`,
+      notice: `Cleared the deadline for **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
     });
     return;
   }
@@ -2002,7 +2001,7 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Updated the deadline for **${updatedTask.taskCode}**.`,
+    notice: `Updated the deadline for **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -2025,7 +2024,7 @@ async function handleEditAttachmentModalSubmit(
 
   const currentAttachment = task.attachments.find((item) => item.id === attachmentId);
   if (!currentAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${task.taskCode}**.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
@@ -2047,13 +2046,13 @@ async function handleEditAttachmentModalSubmit(
   });
 
   if (!updatedAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be updated on **${task.taskCode}**.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} could not be updated on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
   const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} was updated, but ${task.taskCode} could not be reloaded.` });
+    await interaction.editReply({ content: `Attachment #${attachmentId} was updated, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
     return;
   }
 
@@ -2078,6 +2077,6 @@ async function handleEditAttachmentModalSubmit(
     interaction,
     taskId: updatedTask.id,
     mode: 'edit',
-    notice: `Updated attachment #${updatedAttachment.id} on **${updatedTask.taskCode}**.`,
+    notice: `Updated attachment #${updatedAttachment.id} on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }

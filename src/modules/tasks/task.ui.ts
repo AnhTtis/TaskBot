@@ -20,6 +20,7 @@ import { getManagerRoleIds, getReviewerRoleIds } from './task.policy.js';
 import {
   formatAttachmentLabel,
   formatRoleMentions,
+  formatTaskPublicLabel,
   priorityOptions,
   requiredRoleOptions,
   taskDeadlinePresetOptions,
@@ -151,7 +152,7 @@ function buildTaskOverviewPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mod
 
   return withNotice(
     new EmbedBuilder()
-      .setTitle(`🧰 ${task.taskCode} • ${task.title}`)
+      .setTitle(`🧰 ${formatTaskPublicLabel(task.taskNumber)} • ${task.title}`)
       .setColor(0x5865f2)
       .setDescription([
         `Status: **${task.status}**`,
@@ -302,7 +303,7 @@ function buildTaskEditPanelEmbed(options: Omit<TaskPanelPayloadOptions, 'mode'>)
 
   return withNotice(
     new EmbedBuilder()
-      .setTitle(`Edit Task • ${task.taskCode}`)
+      .setTitle(`Edit Task • ${formatTaskPublicLabel(task.taskNumber)}`)
       .setColor(0x5865f2)
       .setDescription([
         task.status === 'BACKLOG'
@@ -373,11 +374,12 @@ function buildTaskAttachmentsPanelEmbed(options: Omit<TaskPanelPayloadOptions, '
 
   return withNotice(
     new EmbedBuilder()
-      .setTitle(`Attachments • ${task.taskCode}`)
+      .setTitle(`Attachments • ${formatTaskPublicLabel(task.taskNumber)}`)
       .setColor(0x5865f2)
       .setDescription([
         'Attachment uploads use the dedicated slash command path so Discord can show the native file upload field.',
-        `Use "/task add-attachment" for **${task.taskCode}** to upload a file or add a URL.`,
+        `Copy this command for **${formatTaskPublicLabel(task.taskNumber)}**: \`/task add-attachment task_code:${task.taskNumber}\``,
+        'Then pick a file in Discord or switch to the URL field before sending.',
         'Choose an existing attachment below to edit or delete it.',
       ].join('\n'))
       .addFields({
@@ -487,7 +489,7 @@ export function buildCreateTaskModal(): ModalBuilder {
 export function buildEditTaskModal(task: TaskWithMembers): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`task:edit-modal:${task.id}`)
-    .setTitle(`Edit ${task.taskCode}`)
+    .setTitle(`Edit ${formatTaskPublicLabel(task.taskNumber)}`)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId('title').setLabel('Title').setStyle(TextInputStyle.Short).setValue(task.title).setMaxLength(120).setRequired(true),
@@ -504,7 +506,7 @@ export function buildEditTaskModal(task: TaskWithMembers): ModalBuilder {
 export function buildDeadlineModal(task: TaskWithMembers): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`task:deadline-modal:${task.id}`)
-    .setTitle(`Deadline • ${task.taskCode}`)
+    .setTitle(`Deadline • ${formatTaskPublicLabel(task.taskNumber)}`)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -527,7 +529,7 @@ export function buildEditAttachmentModal(task: TaskWithMembers, attachmentId: nu
   if (attachment.fileName) {
     return new ModalBuilder()
       .setCustomId(`task:attachment-edit-modal:${task.id}:${attachment.id}`)
-      .setTitle(`Edit file • ${task.taskCode}`)
+      .setTitle(`Edit file • ${formatTaskPublicLabel(task.taskNumber)}`)
       .addComponents(
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
@@ -542,7 +544,7 @@ export function buildEditAttachmentModal(task: TaskWithMembers, attachmentId: nu
 
   return new ModalBuilder()
     .setCustomId(`task:attachment-edit-modal:${task.id}:${attachment.id}`)
-    .setTitle(`Edit link • ${task.taskCode}`)
+    .setTitle(`Edit link • ${formatTaskPublicLabel(task.taskNumber)}`)
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()

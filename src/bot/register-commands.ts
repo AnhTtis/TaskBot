@@ -84,7 +84,7 @@ const commands = [
         .addStringOption((option) =>
           option
             .setName('task_code')
-            .setDescription('Task code, for example TASK-003.')
+            .setDescription('Task number, for example 42 or Task #0042. Legacy TASK-042 still works.')
             .setRequired(true)
             .setAutocomplete(true),
         )

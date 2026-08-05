@@ -51,6 +51,7 @@ model GuildConfig {
   secondaryReviewerRoleId         String?
   maxActiveTasksPerUser           Int      @default(2)
   defaultThreadAutoArchiveMinutes Int      @default(1440)
+  nextTaskNumber                  Int      @default(1)
   createdAt                       DateTime @default(now())
   updatedAt                       DateTime      @updatedAt
   tasks                           Task[]
@@ -59,6 +60,7 @@ model GuildConfig {
 model Task {
   id                     Int                 @id @default(autoincrement())
   taskCode               String
+  taskNumber             Int
   guildId                String
   title                  String
   description            String
@@ -85,6 +87,7 @@ model Task {
   statusHistory          TaskStatusHistory[]
 
   @@unique([guildId, taskCode])
+  @@unique([guildId, taskNumber])
   @@index([guildId, status])
   @@index([assigneeDiscordUserId, status])
 }

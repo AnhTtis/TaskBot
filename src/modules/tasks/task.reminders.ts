@@ -6,6 +6,7 @@ import {
   getDailyReminderKey,
   getDeadlineReminderSummary,
 } from '../../lib/task-datetime.js';
+import { formatTaskDisplayLabel, formatTaskPublicLabel } from './task.helpers.js';
 import { logger } from '../../lib/logger.js';
 import {
   createTaskEvent,
@@ -41,7 +42,7 @@ async function sendDeadlineReminderPass(client: Client): Promise<void> {
     try {
       const user = await client.users.fetch(task.assigneeDiscordUserId);
       await user.send([
-        `⏰ Deadline update for **${task.taskCode} — ${task.title}**`,
+        `⏰ Deadline update for **${formatTaskDisplayLabel(task)}**`,
         `Current time: ${getCurrentTimeForDisplay(now)}`,
         getDeadlineReminderSummary(task.deadlineAt, now),
         `Deadline: ${formatDeadlineForDisplay(task.deadlineAt)}`,
@@ -64,7 +65,7 @@ async function sendDeadlineReminderPass(client: Client): Promise<void> {
     } catch (error) {
       logger.warn('Failed to send deadline reminder DM.', {
         taskId: task.id,
-        taskCode: task.taskCode,
+        taskLabel: formatTaskPublicLabel(task.taskNumber),
         assigneeDiscordUserId: task.assigneeDiscordUserId,
         error,
       });

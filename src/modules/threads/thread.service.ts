@@ -8,6 +8,7 @@ import {
 import type { Task } from '@prisma/client';
 
 import { formatDeadlineForDisplay } from '../../lib/task-datetime.js';
+import { formatTaskDisplayLabel, formatTaskPublicLabel } from '../tasks/task.helpers.js';
 import { formatTaskTeamSummary } from '../tasks/task.members.js';
 import type { TaskWithMembers } from '../tasks/task.types.js';
 
@@ -30,7 +31,7 @@ function formatThreadStatus(status: Task['status']): string {
 
 function buildThreadName(task: ThreadTask): string {
   const normalizedTitle = task.title.replace(/\s+/g, ' ').trim() || 'Task';
-  return `${task.taskCode} — ${normalizedTitle}`.slice(0, 100);
+  return `${formatTaskPublicLabel(task.taskNumber)} — ${normalizedTitle}`.slice(0, 100);
 }
 
 function toThreadAutoArchiveDuration(value: number): ThreadAutoArchiveDuration {
@@ -61,7 +62,7 @@ export async function createTaskThread(options: {
   const thread = await taskMessage.startThread({
     name: buildThreadName(options.task),
     autoArchiveDuration: toThreadAutoArchiveDuration(options.autoArchiveMinutes),
-    reason: `Workspace for ${options.task.taskCode}`,
+    reason: `Workspace for ${formatTaskPublicLabel(options.task.taskNumber)}`,
   });
 
   if (thread.type !== ChannelType.PublicThread) {
@@ -70,7 +71,7 @@ export async function createTaskThread(options: {
 
   await thread.send({
     content: [
-      `# ${options.task.taskCode} — ${options.task.title}`,
+      `# ${formatTaskDisplayLabel(options.task)}`,
       `Team: ${formatTaskTeamSummary(options.task)}`,
       `Status: ${formatThreadStatus(options.task.status)}`,
       `Priority: ${options.task.priority}`,

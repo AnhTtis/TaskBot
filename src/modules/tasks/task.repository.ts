@@ -8,6 +8,7 @@ import type {
 } from '@prisma/client';
 
 import { prisma } from '../../lib/prisma.js';
+import { formatLegacyTaskCode } from './task.helpers.js';
 import type {
   AddTaskMemberResult,
   CreateTaskAttachmentInput,
@@ -21,19 +22,37 @@ import type {
 import { dashboardSummaryTaskSelect, taskWithMembersInclude } from './task.types.js';
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {
-  const data: Prisma.TaskUncheckedCreateInput = {
-    guildId: input.guildId,
-    taskCode: input.taskCode,
-    title: input.title,
-    description: input.description,
-    requiredRole: input.requiredRole,
-    createdByDiscordUserId: input.createdByDiscordUserId,
-    deadlineAt: input.deadlineAt ?? null,
-    targetMemberCount: input.targetMemberCount ?? 1,
-    ...(input.priority ? { priority: input.priority } : {}),
-  };
+  return prisma.$transaction(async (tx) => {
+    const guildConfig = await tx.guildConfig.findUnique({
+      where: { guildId: input.guildId },
+      select: { nextTaskNumber: true },
+    });
 
-  return prisma.task.create({ data });
+    if (!guildConfig) {
+      throw new Error(`Guild config for ${input.guildId} disappeared before task creation.`);
+    }
+
+    const taskNumber = guildConfig.nextTaskNumber;
+    await tx.guildConfig.update({
+      where: { guildId: input.guildId },
+      data: { nextTaskNumber: { increment: 1 } },
+    });
+
+    const data: Prisma.TaskUncheckedCreateInput = {
+      guildId: input.guildId,
+      taskCode: formatLegacyTaskCode(taskNumber),
+      taskNumber,
+      title: input.title,
+      description: input.description,
+      requiredRole: input.requiredRole,
+      createdByDiscordUserId: input.createdByDiscordUserId,
+      deadlineAt: input.deadlineAt ?? null,
+      targetMemberCount: input.targetMemberCount ?? 1,
+      ...(input.priority ? { priority: input.priority } : {}),
+    };
+
+    return tx.task.create({ data });
+  });
 }
 
 export async function findTaskByIdWithMembers(taskId: number): Promise<TaskWithMembers | null> {
@@ -58,10 +77,18 @@ export async function findTaskByCodeWithMembers(
   });
 }
 
-export async function findLatestTaskForGuild(guildId: string): Promise<Task | null> {
-  return prisma.task.findFirst({
-    where: { guildId },
-    orderBy: { id: 'desc' },
+export async function findTaskByNumberWithMembers(
+  guildId: string,
+  taskNumber: number,
+): Promise<TaskWithMembers | null> {
+  return prisma.task.findUnique({
+    where: {
+      guildId_taskNumber: {
+        guildId,
+        taskNumber,
+      },
+    },
+    include: taskWithMembersInclude,
   });
 }
 
@@ -258,7 +285,7 @@ export async function createTaskReminderReceipt(
   });
 }
 
-export async function hasTaskReminderReceipt(input: {
+export async function hasTaskReminderReceipt(options: {
   readonly taskId: number;
   readonly recipientDiscordUserId: string;
   readonly reminderKey: string;
@@ -266,11 +293,12 @@ export async function hasTaskReminderReceipt(input: {
   const receipt = await prisma.taskReminderReceipt.findUnique({
     where: {
       taskId_recipientDiscordUserId_reminderKey: {
-        taskId: input.taskId,
-        recipientDiscordUserId: input.recipientDiscordUserId,
-        reminderKey: input.reminderKey,
+        taskId: options.taskId,
+        recipientDiscordUserId: options.recipientDiscordUserId,
+        reminderKey: options.reminderKey,
       },
     },
+    select: { id: true },
   });
 
   return Boolean(receipt);
@@ -281,34 +309,25 @@ export async function claimTask(
   assigneeDiscordUserId: string,
 ): Promise<TaskWithMembers | null> {
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.task.updateMany({
-      where: {
-        id: taskId,
-        status: 'BACKLOG',
-        assigneeDiscordUserId: null,
-      },
-      data: {
-        status: 'IN_PROGRESS',
-        assigneeDiscordUserId,
-        blockedReason: null,
-        reviewRequestedAt: null,
-        completedAt: null,
-      },
+    const task = await tx.task.findUnique({
+      where: { id: taskId },
+      include: taskWithMembersInclude,
     });
 
-    if (updated.count === 0) {
+    if (!task || task.status !== 'BACKLOG' || task.assigneeDiscordUserId || task.members.length > 0) {
       return null;
     }
 
-    await tx.taskMember.upsert({
-      where: {
-        taskId_discordUserId: {
-          taskId,
-          discordUserId: assigneeDiscordUserId,
-        },
+    await tx.task.update({
+      where: { id: taskId },
+      data: {
+        assigneeDiscordUserId,
+        status: 'IN_PROGRESS',
       },
-      update: {},
-      create: {
+    });
+
+    await tx.taskMember.create({
+      data: {
         taskId,
         discordUserId: assigneeDiscordUserId,
       },
@@ -326,25 +345,25 @@ export async function addTaskMember(
   discordUserId: string,
 ): Promise<AddTaskMemberResult> {
   return prisma.$transaction(async (tx) => {
-    const existingTask = await tx.task.findUnique({
+    const task = await tx.task.findUnique({
       where: { id: taskId },
       include: taskWithMembersInclude,
     });
 
-    if (!existingTask) {
+    if (!task) {
       return { status: 'missing' };
     }
 
-    if (!['IN_PROGRESS', 'BLOCKED'].includes(existingTask.status)) {
-      return { status: 'not_joinable', task: existingTask };
+    if (!['IN_PROGRESS', 'BLOCKED'].includes(task.status)) {
+      return { status: 'not_joinable', task };
     }
 
-    if (existingTask.members.some((member) => member.discordUserId === discordUserId)) {
-      return { status: 'already_member', task: existingTask };
+    if (task.members.some((member) => member.discordUserId === discordUserId)) {
+      return { status: 'already_member', task };
     }
 
-    if (existingTask.members.length >= existingTask.targetMemberCount) {
-      return { status: 'full', task: existingTask };
+    if (task.members.length >= task.targetMemberCount) {
+      return { status: 'full', task };
     }
 
     await tx.taskMember.create({
@@ -353,32 +372,6 @@ export async function addTaskMember(
         discordUserId,
       },
     });
-
-    const memberCount = await tx.taskMember.count({
-      where: { taskId },
-    });
-
-    if (memberCount > existingTask.targetMemberCount) {
-      await tx.taskMember.delete({
-        where: {
-          taskId_discordUserId: {
-            taskId,
-            discordUserId,
-          },
-        },
-      });
-
-      const fullTask = await tx.task.findUnique({
-        where: { id: taskId },
-        include: taskWithMembersInclude,
-      });
-
-      if (!fullTask) {
-        return { status: 'missing' };
-      }
-
-      return { status: 'full', task: fullTask };
-    }
 
     const updatedTask = await tx.task.findUnique({
       where: { id: taskId },
@@ -399,25 +392,40 @@ export async function clearTaskMembers(taskId: number): Promise<void> {
   });
 }
 
+export async function countActiveTasksForAssignee(
+  guildId: string,
+  discordUserId: string,
+): Promise<number> {
+  return prisma.task.count({
+    where: {
+      guildId,
+      assigneeDiscordUserId: discordUserId,
+      status: {
+        in: ['IN_PROGRESS', 'BLOCKED', 'REVIEW'],
+      },
+    },
+  });
+}
+
 export async function transitionTaskWithMembers(
   taskId: number,
-  allowedStatuses: TaskStatus[],
+  allowedStatuses: readonly TaskStatus[],
   data: Prisma.TaskUncheckedUpdateInput,
 ): Promise<TaskWithMembers | null> {
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.task.updateMany({
-      where: {
-        id: taskId,
-        status: {
-          in: allowedStatuses,
-        },
-      },
-      data,
+    const task = await tx.task.findUnique({
+      where: { id: taskId },
+      include: taskWithMembersInclude,
     });
 
-    if (updated.count === 0) {
+    if (!task || !allowedStatuses.includes(task.status)) {
       return null;
     }
+
+    await tx.task.update({
+      where: { id: taskId },
+      data,
+    });
 
     return tx.task.findUnique({
       where: { id: taskId },
@@ -425,30 +433,3 @@ export async function transitionTaskWithMembers(
     });
   });
 }
-
-export async function countActiveTasksForAssignee(
-  guildId: string,
-  assigneeDiscordUserId: string,
-): Promise<number> {
-  return prisma.task.count({
-    where: {
-      guildId,
-      status: {
-        in: ['IN_PROGRESS', 'BLOCKED', 'REVIEW'],
-      },
-      OR: [
-        {
-          assigneeDiscordUserId,
-        },
-        {
-          members: {
-            some: {
-              discordUserId: assigneeDiscordUserId,
-            },
-          },
-        },
-      ],
-    },
-  });
-}
-

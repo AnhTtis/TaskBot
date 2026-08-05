@@ -9,6 +9,7 @@ import type { RequiredRole, Task, TaskPriority, TaskStatus } from '@prisma/clien
 
 import { formatDeadlineForDisplay } from '../../lib/task-datetime.js';
 
+import { formatTaskDisplayLabel, formatTaskPublicLabel } from './task.helpers.js';
 import {
   formatTaskTeamMentions,
   formatTaskTeamSummary,
@@ -236,8 +237,8 @@ function truncateLines(lines: string[], maxLines: number): string[] {
 
 function buildAttentionLines(tasks: readonly DashboardSummaryTask[]): string[] {
   const now = Date.now();
-  const blocked = tasks.filter((task) => task.status === 'BLOCKED').map((task) => task.taskCode);
-  const review = tasks.filter((task) => task.status === 'REVIEW').map((task) => task.taskCode);
+  const blocked = tasks.filter((task) => task.status === 'BLOCKED').map((task) => formatTaskPublicLabel(task.taskNumber));
+  const review = tasks.filter((task) => task.status === 'REVIEW').map((task) => formatTaskPublicLabel(task.taskNumber));
   const overdue = tasks
     .filter(
       (task) =>
@@ -245,13 +246,13 @@ function buildAttentionLines(tasks: readonly DashboardSummaryTask[]): string[] {
         task.deadlineAt !== null &&
         task.deadlineAt.getTime() < now,
     )
-    .map((task) => task.taskCode);
+    .map((task) => formatTaskPublicLabel(task.taskNumber));
   const helpNeeded = tasks
     .filter(
       (task) =>
         (task.status === 'IN_PROGRESS' || task.status === 'BLOCKED') && taskNeedsMoreMembers(task),
     )
-    .map((task) => `${task.taskCode} (${getTaskMemberCount(task)}/${getTaskTargetMemberCount(task)})`);
+    .map((task) => `${formatTaskPublicLabel(task.taskNumber)} (${getTaskMemberCount(task)}/${getTaskTargetMemberCount(task)})`);
 
   const lines = [
     `⛔ Blocked: ${blocked.length > 0 ? blocked.join(', ') : 'None'}`,
@@ -274,7 +275,7 @@ function buildActiveTaskLines(tasks: readonly DashboardSummaryTask[]): string[] 
 
   return truncateLines(
     activeTasks.map(
-      (task) => `${task.taskCode} — ${getTaskMemberCount(task)}/${getTaskTargetMemberCount(task)} • ${formatTaskTeamMentions(task)}`,
+      (task) => `${formatTaskPublicLabel(task.taskNumber)} — ${getTaskMemberCount(task)}/${getTaskTargetMemberCount(task)} • ${formatTaskTeamMentions(task)}`,
     ),
     8,
   );
@@ -434,7 +435,7 @@ export function buildTaskCardEmbed(
   }
 
   return new EmbedBuilder()
-    .setTitle(`${task.taskCode} • ${task.title}`)
+    .setTitle(formatTaskDisplayLabel(task))
     .setColor(getTaskCardColor(task.status))
     .setDescription([
       '### Task brief',
@@ -446,7 +447,7 @@ export function buildTaskCardEmbed(
     ].join('\n'))
     .addFields(fields)
     .setFooter({
-      text: `Task ID ${task.id} • Configured managers and reviewers handle approvals`,
+      text: 'Configured managers and reviewers handle approvals',
     })
     .setTimestamp(task.updatedAt);
 }

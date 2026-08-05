@@ -11,6 +11,121 @@ Thay vì web dashboard riêng, TaskBot dùng chính Discord làm giao diện v�
 
 ---
 
+## Quick start: từ đầu đến lúc chạy `/setup`
+
+Nếu bạn chỉ cần đưa bot lên chạy và vào được bước `/setup`, làm theo đúng thứ tự này.
+
+### Bước 1: Tạo Discord application + bot
+1. Vào Discord Developer Portal.
+2. Tạo application mới.
+3. Tạo bot và lấy `DISCORD_TOKEN`.
+4. Lấy `CLIENT_ID` của application.
+5. Invite bot vào server với scopes:
+   - `bot`
+   - `applications.commands`
+
+### Bước 2: Chuẩn bị Discord server
+Tạo role khuyến nghị:
+- `Admin`
+- `Technician`
+- `Researcher`
+
+Tạo channel khuyến nghị:
+- `#task-dashboard`
+- `#task-feed`
+- `#task-archive` *(optional nhưng nên có)*
+
+> Logic claim/join hiện tại đang kiểm tra đúng tên role `Technician` và `Researcher`, nên chưa nên đổi hai tên này nếu chưa sửa code.
+
+### Bước 3: Clone repo và mở terminal đúng thư mục
+Tất cả lệnh `npm`, `prisma`, `pm2` bên dưới đều phải chạy **bên trong folder repo TaskBot**.
+
+Nếu chưa clone repo:
+```bash
+git clone <repo-url>
+cd TaskBot
+```
+
+Nếu đã có source code sẵn trên máy, chỉ cần đi vào đúng folder repo:
+```bash
+cd /duong-dan/toi/TaskBot
+```
+
+Ví dụ trên Linux server:
+```bash
+cd ~/TaskBot
+```
+
+Ví dụ trên Windows PowerShell:
+```powershell
+cd "D:\Data\Learning\University\Project thư viện\TaskBot"
+```
+
+### Bước 4: Chuẩn bị file `.env`
+Copy `.env.example` thành `.env`, rồi điền giá trị thật:
+
+```env
+DISCORD_TOKEN=your_bot_token_here
+CLIENT_ID=your_discord_application_id_here
+DATABASE_URL=file:./dev.db
+GUILD_ID=your_server_id_here
+NODE_ENV=development
+```
+
+Ghi chú:
+- File `.env` nên nằm ngay trong folder repo `TaskBot`.
+- `GUILD_ID` là optional trong code, nhưng nên có khi dev hoặc khi deploy cho 1 server để slash command cập nhật nhanh hơn.
+- Nếu chạy production với SQLite persistent, đổi `DATABASE_URL` sang path tuyệt đối, ví dụ `file:/opt/taskbot/data/taskbot.db`.
+
+### Bước 5: Cài dependency và database
+Sau khi đã `cd` vào repo, chạy lần lượt:
+
+```bash
+npm install
+npm run prisma:generate
+npm run prisma:migrate:dev
+```
+
+### Bước 6: Register slash commands
+Vẫn trong folder repo, chạy:
+
+```bash
+npm run register:commands
+```
+
+Ghi chú:
+- Nếu đang ở bash/Linux, dùng `npm`.
+- Chỉ dùng `npm.cmd` khi đang ở Windows PowerShell/CMD và bị chặn `npm.ps1`.
+
+### Bước 7: Chạy bot
+Vẫn trong folder repo:
+
+Nếu chạy local:
+```bash
+npm run dev
+```
+
+Nếu chạy production:
+```bash
+npm run build
+npm run start
+```
+
+### Bước 8: Kiểm tra bot và chạy `/setup`
+Trong Discord:
+1. chạy `/ping`
+2. nếu bot phản hồi, chạy `/setup`
+3. điền các field cần thiết:
+   - `dashboard_channel`
+   - `feed_channel`
+   - `archive_channel` *(optional)*
+   - `admin_role`
+   - các role optional khác nếu cần
+
+Sau `/setup`, bot sẽ lưu config vào DB và tạo hoặc cập nhật summary dashboard trong `#task-dashboard`.
+
+---
+
 ## 1. Trạng thái hiện tại
 
 - Version hiện tại: `0.1.0`
@@ -67,7 +182,8 @@ TaskBot hiện giữ:
 
 ### Ghi chú về `/task add-attachment`
 - dùng khi đang ở flow `Attachments`
-- `task_code` có **gợi ý chọn danh sách task**, nhưng vẫn có thể **tự nhập tay**
+- `task_code` hiện nhận **số thứ tự task theo guild**, ví dụ `42` hoặc `Task #0042` *(giữ tên option cũ để tương thích, nhưng ý nghĩa giờ là task number)*
+- autocomplete sẽ hiển thị kiểu `Task #0042 • Tên task`, nhưng vẫn có thể **tự nhập tay**
 - nếu upload file, Discord sẽ mở đúng ô chọn file native như trước
 - nếu không upload file, có thể nhập `url`
 - bot vẫn giữ **tên file gốc đúng như Discord gửi vào**
@@ -230,6 +346,7 @@ Panel này sẽ:
 - Có nút hướng dẫn:
   - `Upload File`
   - `Add URL`
+- Khi bấm `Upload File` hoặc `Add URL`, bot sẽ hiện **lệnh slash có sẵn để copy nhanh** cho đúng task hiện tại
 - Có nút theo từng attachment để:
   - `⚙️ Fix ...`
   - `✖️ X ...`
@@ -240,7 +357,8 @@ Panel này sẽ:
 ### Upload File như trước
 Khi cần upload file trực tiếp kiểu cũ:
 - Dùng `/task add-attachment`
-- Chọn task từ list suggestion hoặc tự nhập `TASK-xxx`
+- Chọn task từ list suggestion hoặc tự nhập số task như `42` / `Task #0042`
+- Nếu bấm nút `Upload File`, bot sẽ đưa ra một lệnh slash sẵn để copy nhanh
 - Upload file trực tiếp vào attachment field của command
 - Có thể thêm note/label nếu muốn
 
@@ -437,6 +555,21 @@ NODE_ENV=development
 ```
 
 ## Các bước local
+0. Mở terminal và đi vào đúng folder repo:
+   ```bash
+   cd /duong-dan/toi/TaskBot
+   ```
+
+   Ví dụ Linux:
+   ```bash
+   cd ~/TaskBot
+   ```
+
+   Ví dụ Windows PowerShell:
+   ```powershell
+   cd "D:\Data\Learning\University\Project thư viện\TaskBot"
+   ```
+
 1. Cài dependency:
    ```bash
    npm install
@@ -463,7 +596,7 @@ NODE_ENV=development
    - bấm `Create Task` từ summary dashboard
    - test `/task add-attachment`
 
-Nếu PowerShell chặn `npm.ps1`, dùng `npm.cmd` thay cho `npm`.
+Nếu PowerShell chặn `npm.ps1`, dùng `npm.cmd` thay cho `npm` **trên Windows PowerShell/CMD**. Nếu đang ở bash/Linux thì vẫn dùng `npm` bình thường.
 
 ---
 
@@ -486,39 +619,54 @@ NODE_ENV=production
 ```
 
 ### Quy trình deploy
-1. Clone source code lên host
-2. Tạo `.env`
-3. Cài dependency sạch:
+1. Clone source code lên host:
+   ```bash
+   git clone <repo-url>
+   ```
+2. Đi vào đúng folder repo:
+   ```bash
+   cd TaskBot
+   ```
+
+   Ví dụ nếu repo đã nằm sẵn ở home:
+   ```bash
+   cd ~/TaskBot
+   ```
+3. Tạo `.env` trong chính folder repo.
+4. Cài dependency sạch:
    ```bash
    npm ci
    ```
-4. Validate Prisma schema:
+5. Validate Prisma schema:
    ```bash
    npm run prisma:validate
    ```
-5. Generate Prisma client:
+6. Generate Prisma client:
    ```bash
    npm run prisma:generate
    ```
-6. Chạy migration production:
+7. Chạy migration production:
    ```bash
    npm run prisma:migrate:deploy
    ```
-7. Register slash commands:
+8. Register slash commands:
    ```bash
    npm run register:commands
    ```
-8. Build app:
+9. Build app:
    ```bash
    npm run build
    ```
-9. Start bot:
+10. Start bot:
    ```bash
    npm run start
    ```
 
 ### PM2
+Các lệnh này cũng phải chạy trong folder repo hoặc sau khi process `taskbot` đã được tạo đúng từ repo đó:
+
 ```bash
+cd ~/TaskBot
 pm2 start npm --name taskbot -- run start
 pm2 logs taskbot
 pm2 restart taskbot
@@ -573,7 +721,7 @@ Sau đó trong Discord chạy lại:
 ### Khi upload attachment không hoạt động như mong đợi
 Kiểm tra:
 - đã dùng đúng `/task add-attachment`
-- đã chọn đúng `task_code` hoặc nhập đúng `TASK-xxx`
+- đã chọn đúng `task_code` hoặc nhập đúng số task, ví dụ `42` / `Task #0042`
 - nếu upload file: có chọn đúng attachment field chưa
 - nếu thêm link: có nhập đúng `url` chưa
 - bot có quyền attach files / send messages ở server đó không

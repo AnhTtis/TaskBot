@@ -58,6 +58,11 @@ export type TaskDeadlinePreset = {
   readonly minute: number;
 };
 
+export type ParsedTaskReference = {
+  readonly taskNumber: number | null;
+  readonly legacyTaskCode: string | null;
+};
+
 export const taskDeadlinePresetOptions: ReadonlyArray<TaskDeadlinePreset> = [
   { value: 'today-18-00', label: 'Today 18:00', dayOffset: 0, hour: 18, minute: 0 },
   { value: 'tomorrow-09-00', label: 'Tomorrow 09:00', dayOffset: 1, hour: 9, minute: 0 },
@@ -87,17 +92,47 @@ export function normalizeOptionalText(value: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function parseNextTaskSequence(taskCode: string | null): number {
-  if (!taskCode) {
-    return 1;
-  }
-
-  const match = /^TASK-(\d+)$/.exec(taskCode);
-  return match?.[1] ? Number.parseInt(match[1], 10) + 1 : 1;
+export function formatTaskPublicLabel(taskNumber: number): string {
+  return `Task #${taskNumber.toString().padStart(4, '0')}`;
 }
 
-export function formatTaskCode(sequence: number): string {
-  return `TASK-${sequence.toString().padStart(3, '0')}`;
+export function formatTaskDisplayLabel(options: {
+  readonly taskNumber: number;
+  readonly title: string;
+}): string {
+  return `${formatTaskPublicLabel(options.taskNumber)} • ${options.title}`;
+}
+
+export function formatLegacyTaskCode(taskNumber: number): string {
+  return `TASK-${taskNumber.toString().padStart(4, '0')}`;
+}
+
+export function parseTaskReferenceInput(value: string): ParsedTaskReference {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { taskNumber: null, legacyTaskCode: null };
+  }
+
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  const legacyMatch = /^TASK-(\d+)$/i.exec(normalized);
+  if (legacyMatch) {
+    const taskNumber = Number.parseInt(legacyMatch[1]!, 10);
+    return {
+      taskNumber: Number.isInteger(taskNumber) && taskNumber > 0 ? taskNumber : null,
+      legacyTaskCode: normalized.toUpperCase(),
+    };
+  }
+
+  const taskNumberMatch = /^(?:task\s*#\s*|#\s*)?0*(\d+)$/i.exec(normalized);
+  if (!taskNumberMatch) {
+    return { taskNumber: null, legacyTaskCode: null };
+  }
+
+  const taskNumber = Number.parseInt(taskNumberMatch[1]!, 10);
+  return {
+    taskNumber: Number.isInteger(taskNumber) && taskNumber > 0 ? taskNumber : null,
+    legacyTaskCode: null,
+  };
 }
 
 export function parseRequiredRoleInput(value: string): RequiredRole | null {

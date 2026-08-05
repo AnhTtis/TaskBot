@@ -21,9 +21,9 @@ import {
   buildTaskCardEmbed,
 } from './task.renderer.js';
 import { sendTaskFeedMessage } from './task.feed.js';
-import { isGuildTextChannel } from './task.helpers.js';
+import { formatTaskPublicLabel, isGuildTextChannel } from './task.helpers.js';
 import {
-  findTaskByCodeWithMembers,
+  findTaskByNumberWithMembers,
   listTasksForDashboardSummary,
   listTasksForGuildWithMembers,
   updateTaskWithMembers,
@@ -35,7 +35,7 @@ type SyncDashboardInput = {
   readonly guildConfig: GuildConfig;
   readonly dashboardChannel: TextChannel;
   readonly refreshedByUserId: string;
-  readonly taskCode: string | null;
+  readonly taskNumber: number | null;
 };
 
 type SyncDashboardResult = {
@@ -294,15 +294,15 @@ export async function syncTaskDashboard(
     refreshedByUserId: input.refreshedByUserId,
   });
 
-  const tasks = input.taskCode
-    ? await (async (normalizedTaskCode: string) => {
-        const task = await findTaskByCodeWithMembers(input.guild.id, normalizedTaskCode);
+  const tasks = input.taskNumber
+    ? await (async (taskNumber: number) => {
+        const task = await findTaskByNumberWithMembers(input.guild.id, taskNumber);
         if (!task) {
-          throw new Error(`Task ${normalizedTaskCode} could not be found.`);
+          throw new Error(`${formatTaskPublicLabel(taskNumber)} could not be found.`);
         }
 
         return [task];
-      })(input.taskCode)
+      })(input.taskNumber)
     : await listTasksForGuildWithMembers(input.guild.id);
 
   const warnings: string[] = [];
@@ -336,16 +336,16 @@ export async function syncTaskDashboard(
       }
       if (workspaceResult.cleared) {
         missingThreadsCleared += 1;
-        warnings.push(`${task.taskCode}: missing workspace reference was cleared.`);
+        warnings.push(`${formatTaskPublicLabel(task.taskNumber)}: missing workspace reference was cleared.`);
       }
     } catch (error) {
       logger.error('Task workspace sync failed', {
         guildId: input.guild.id,
         taskId: task.id,
-        taskCode: task.taskCode,
+        taskNumber: task.taskNumber,
         error,
       });
-      warnings.push(`${task.taskCode}: workspace repair failed.`);
+      warnings.push(`${formatTaskPublicLabel(task.taskNumber)}: workspace repair failed.`);
     }
 
     try {
@@ -363,10 +363,10 @@ export async function syncTaskDashboard(
       logger.error('Task card sync failed', {
         guildId: input.guild.id,
         taskId: task.id,
-        taskCode: task.taskCode,
+        taskNumber: task.taskNumber,
         error,
       });
-      warnings.push(`${task.taskCode}: task card sync failed.`);
+      warnings.push(`${formatTaskPublicLabel(task.taskNumber)}: task card sync failed.`);
       continue;
     }
   }
