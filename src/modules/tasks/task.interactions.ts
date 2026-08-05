@@ -96,7 +96,7 @@ function buildPrivatePanelKey(interaction: RepliableInteraction): string | null 
   return `${interaction.guildId}:${interaction.user.id}`;
 }
 
-async function deleteTrackedPrivatePanel(interaction: RepliableInteraction): Promise<void> {
+export async function deleteTrackedPrivatePanel(interaction: RepliableInteraction): Promise<void> {
   const privatePanelKey = buildPrivatePanelKey(interaction);
   const previousMessageId = privatePanelKey ? lastPrivateTaskPanelByUser.get(privatePanelKey) : null;
   if (!privatePanelKey || !previousMessageId) {
@@ -107,7 +107,7 @@ async function deleteTrackedPrivatePanel(interaction: RepliableInteraction): Pro
   lastPrivateTaskPanelByUser.delete(privatePanelKey);
 }
 
-async function editTrackedPrivateReply(
+export async function editTrackedPrivateReply(
   interaction: RepliableInteraction,
   payload: InteractionEditReplyOptions,
 ) {
@@ -609,6 +609,16 @@ async function handleClaimTaskInteraction(
     threadCreationFailed,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `✋ Task claimed by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Team: ${formatTaskTeamMentions(updatedTask)}`,
+      `Workspace: ${threadChannelId ? `<#${threadChannelId}>` : 'Unavailable'}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -723,6 +733,16 @@ async function handleJoinTaskInteraction(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🤝 Member joined a task.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `User: <@${interaction.user.id}>`,
+      `Team: ${formatTaskTeamMentions(updatedTask)}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -828,6 +848,15 @@ async function handleBlockTaskSubmit(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `⛔ Task blocked by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Reason: ${reason}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -903,6 +932,14 @@ async function handleUnblockTaskInteraction(
     dashboardChannel,
     guildConfig,
     task: updatedTask,
+  });
+
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `▶️ Task unblocked by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+    ].join('\n'),
   });
 
   await showTaskPanelReply({
@@ -984,6 +1021,18 @@ async function handleRequestReviewInteraction(
     formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
   )}`;
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `👀 Review requested by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Reviewers: ${formatRoleMentions(
+        getReviewerRoleIds(guildConfig),
+        formatRoleMentions(getManagerRoleIds(guildConfig), 'Managers only'),
+      )}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -1061,6 +1110,14 @@ async function handleApproveTaskInteraction(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `✅ Task approved by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -1136,6 +1193,14 @@ async function handleReturnTaskInteraction(
     dashboardChannel,
     guildConfig,
     task: updatedTask,
+  });
+
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `↩️ Task returned for changes by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+    ].join('\n'),
   });
 
   await showTaskPanelReply({
@@ -1224,6 +1289,14 @@ async function handleReopenTaskInteraction(
     dashboardChannel,
     guildConfig,
     task: updatedTask,
+  });
+
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `♻️ Task reopened by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+    ].join('\n'),
   });
 
   await showTaskPanelReply({
@@ -1463,10 +1536,9 @@ async function handleAttachmentUploadHelpInteraction(
     taskId,
     mode: 'attachments',
     notice: [
-      `Copy this command: \`/task add-attachment task_code:${context.task.taskNumber}\``,
+      `Copy this slash: \`/task add-attachment task_code:${formatTaskPublicLabel(context.task.taskNumber)} • ${context.task.title} file:\``,
       `Target task: **${formatTaskPublicLabel(context.task.taskNumber)}**.`,
-      'Then attach the file in Discord before you send the slash command.',
-      'Optional: fill the label field if you want extra context.',
+      'Then upload the file into the file field before you send the slash command.',
     ].join('\n'),
   });
 }
@@ -1492,10 +1564,9 @@ async function handleAttachmentLinkHelpInteraction(
     taskId,
     mode: 'attachments',
     notice: [
-      `Copy this command: \`/task add-attachment task_code:${context.task.taskNumber} url:https://example.com\``,
+      `Copy this slash: \`/task add-attachment task_code:${formatTaskPublicLabel(context.task.taskNumber)} • ${context.task.title} url:https://example.com\``,
       `Target task: **${formatTaskPublicLabel(context.task.taskNumber)}**.`,
       'Replace the example URL before you send the slash command.',
-      'Optional: fill the label field if you want extra context.',
     ].join('\n'),
   });
 }
@@ -1553,6 +1624,15 @@ async function handleSetRoleSelectionInteraction(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🪪 Required role updated by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Required role: ${requiredRole}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -1602,6 +1682,15 @@ async function handleSetPrioritySelectionInteraction(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `⚡ Priority updated by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Priority: ${priority}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -1646,6 +1735,14 @@ async function handleSetDeadlinePresetInteraction(
       task: updatedTask,
     });
 
+    await sendTaskFeedMessage({
+      guild,
+      content: [
+        `🗓️ Deadline cleared by <@${interaction.user.id}>.`,
+        `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      ].join('\n'),
+    });
+
     await showTaskPanelReply({
       interaction,
       taskId: updatedTask.id,
@@ -1684,6 +1781,15 @@ async function handleSetDeadlinePresetInteraction(
     dashboardChannel,
     guildConfig,
     task: updatedTask,
+  });
+
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🗓️ Deadline updated by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Deadline: ${formatDeadlineForInput(deadlineAt)}`,
+    ].join('\n'),
   });
 
   await showTaskPanelReply({
@@ -1739,7 +1845,7 @@ async function handleEditAttachmentPrompt(
 
   const modal = buildEditAttachmentModal(context.task, attachmentId);
   if (!modal) {
-    await interaction.reply({ content: `Attachment #${attachmentId} could not be found on this task.`, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'That attachment could not be found on this task.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1765,13 +1871,13 @@ async function handleDeleteAttachmentInteraction(
 
   const removedAttachment = await removeTaskAttachment({ attachmentId, taskId: task.id });
   if (!removedAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
+    await interaction.editReply({ content: `That attachment could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
   const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} was deleted, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
+    await interaction.editReply({ content: `The attachment was deleted, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
     return;
   }
 
@@ -1793,11 +1899,20 @@ async function handleDeleteAttachmentInteraction(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🗑️ Attachment deleted by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Item: ${formatAttachmentLabel(removedAttachment)}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
-    mode: 'edit',
-    notice: `Deleted attachment #${removedAttachment.id} from **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
+    mode: 'attachments',
+    notice: `Deleted **${formatAttachmentLabel(removedAttachment)}** from **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }
 
@@ -1856,6 +1971,15 @@ async function handleCreateTaskModalSubmit(interaction: ModalSubmitInteraction):
     dashboardChannel,
     refreshedByUserId: interaction.user.id,
     task: createdTask,
+  });
+
+  await sendTaskFeedMessage({
+    guild: interaction.guild,
+    content: [
+      `➕ Task created by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(persistedTask.taskNumber)}**`,
+      `Title: ${persistedTask.title}`,
+    ].join('\n'),
   });
 
   await showTaskPanelReply({
@@ -1935,6 +2059,16 @@ async function handleEditTaskModalSubmit(interaction: ModalSubmitInteraction, ta
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `📝 Task metadata updated by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Title: ${updatedTask.title}`,
+      `Team size: ${updatedTask.targetMemberCount}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
@@ -1968,6 +2102,14 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
       dashboardChannel,
       guildConfig,
       task: updatedTask,
+    });
+
+    await sendTaskFeedMessage({
+      guild,
+      content: [
+        `🗓️ Deadline cleared by <@${interaction.user.id}>.`,
+        `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      ].join('\n'),
     });
 
     await showTaskPanelReply({
@@ -2024,7 +2166,7 @@ async function handleEditAttachmentModalSubmit(
 
   const currentAttachment = task.attachments.find((item) => item.id === attachmentId);
   if (!currentAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
+    await interaction.editReply({ content: `That attachment could not be found on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
@@ -2046,13 +2188,13 @@ async function handleEditAttachmentModalSubmit(
   });
 
   if (!updatedAttachment) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} could not be updated on **${formatTaskPublicLabel(task.taskNumber)}**.` });
+    await interaction.editReply({ content: `That attachment could not be updated on **${formatTaskPublicLabel(task.taskNumber)}**.` });
     return;
   }
 
   const updatedTask = await findTaskByIdWithMembers(task.id);
   if (!updatedTask) {
-    await interaction.editReply({ content: `Attachment #${attachmentId} was updated, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
+    await interaction.editReply({ content: `The attachment was updated, but ${formatTaskPublicLabel(task.taskNumber)} could not be reloaded.` });
     return;
   }
 
@@ -2073,10 +2215,19 @@ async function handleEditAttachmentModalSubmit(
     task: updatedTask,
   });
 
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🔧 Attachment updated by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Item: ${formatAttachmentLabel(updatedAttachment)}`,
+    ].join('\n'),
+  });
+
   await showTaskPanelReply({
     interaction,
     taskId: updatedTask.id,
-    mode: 'edit',
-    notice: `Updated attachment #${updatedAttachment.id} on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
+    mode: 'attachments',
+    notice: `Updated **${formatAttachmentLabel(updatedAttachment)}** on **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
   });
 }

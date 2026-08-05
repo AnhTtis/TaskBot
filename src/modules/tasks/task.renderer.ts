@@ -82,13 +82,16 @@ function formatAttachmentDisplayName(task: TaskWithMembers['attachments'][number
     return label;
   }
 
-  return `Attachment #${task.id}`;
+  return 'Attachment';
 }
 
-function formatAttachmentLine(task: TaskWithMembers['attachments'][number]): string {
+function formatAttachmentLine(
+  task: TaskWithMembers['attachments'][number],
+  index: number,
+): string {
   const fileName = task.fileName?.trim();
   const label = task.label?.trim();
-  const parts = [`#${task.id}`, `**${escapeMarkdown(formatAttachmentDisplayName(task))}**`];
+  const parts = [`${index + 1}.`, `**${escapeMarkdown(formatAttachmentDisplayName(task))}**`];
 
   if (fileName && label) {
     parts.push(`Note: ${escapeMarkdown(label)}`);
@@ -413,7 +416,7 @@ export function buildTaskCardEmbed(
   if (hasAttachments(task) && task.attachments.length > 0) {
     fields.push({
       name: `Attachments (${task.attachments.length})`,
-      value: joinLinesWithFieldLimit(task.attachments.map((attachment) => formatAttachmentLine(attachment))),
+      value: joinLinesWithFieldLimit(task.attachments.map((attachment, index) => formatAttachmentLine(attachment, index))),
       inline: false,
     });
   }

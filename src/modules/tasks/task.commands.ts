@@ -8,6 +8,7 @@ import type {
 import { MessageFlags } from 'discord.js';
 
 import { findGuildConfigByGuildId } from '../guild-config/guild-config.repository.js';
+import { deleteTrackedPrivatePanel, editTrackedPrivateReply } from './task.interactions.js';
 import { refreshTaskPresentation } from './task.refresh.js';
 import {
   formatAttachmentLabel,
@@ -18,6 +19,7 @@ import {
   parseTaskReferenceInput,
 } from './task.helpers.js';
 import { hasManagementAccess } from './task.policy.js';
+import { sendTaskFeedMessage } from './task.feed.js';
 import {
   createTaskAttachment,
   createTaskEvent,
@@ -26,6 +28,7 @@ import {
   findTaskByNumberWithMembers,
   listTasksForGuildWithMembers,
 } from './task.repository.js';
+import { buildTaskPanelPayload } from './task.ui.js';
 
 function truncateChoiceLabel(value: string, maxLength = 100): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
@@ -124,7 +127,7 @@ export async function handleTaskAutocompleteInteraction(
     .reverse()
     .map((task) => ({
       name: truncateChoiceLabel(formatTaskDisplayLabel(task)),
-      value: String(task.taskNumber),
+      value: formatTaskDisplayLabel(task),
     }));
 
   await interaction.respond(suggestions);
@@ -148,6 +151,7 @@ export async function handleTaskCommand(
   }
 
   const { guild, guildConfig, dashboardChannel } = context;
+  await deleteTrackedPrivatePanel(interaction);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const taskReferenceInput = interaction.options.getString('task_code', true);
@@ -210,7 +214,31 @@ export async function handleTaskCommand(
     task: updatedTask,
   });
 
-  await interaction.editReply({
-    content: `Added attachment #${attachment.id} (${formatAttachmentLabel(attachment)}) to **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `📎 Attachment added by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskPublicLabel(updatedTask.taskNumber)}**`,
+      `Item: ${formatAttachmentLabel(attachment)}`,
+    ].join('\n'),
+  });
+
+  const payload = buildTaskPanelPayload({
+    task: updatedTask,
+    guildConfig,
+    access: {
+      manager: true,
+      reviewer: false,
+      canClaim: false,
+      canManageProgress: true,
+      isTaskMember: false,
+    },
+    mode: 'attachments',
+    notice: `Added **${formatAttachmentLabel(attachment)}** to **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
+  });
+
+  await editTrackedPrivateReply(interaction, {
+    content: null,
+    ...payload,
   });
 }

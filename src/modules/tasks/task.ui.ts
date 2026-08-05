@@ -20,6 +20,7 @@ import { getManagerRoleIds, getReviewerRoleIds } from './task.policy.js';
 import {
   formatAttachmentLabel,
   formatRoleMentions,
+  formatTaskDisplayLabel,
   formatTaskPublicLabel,
   priorityOptions,
   requiredRoleOptions,
@@ -378,8 +379,8 @@ function buildTaskAttachmentsPanelEmbed(options: Omit<TaskPanelPayloadOptions, '
       .setColor(0x5865f2)
       .setDescription([
         'Attachment uploads use the dedicated slash command path so Discord can show the native file upload field.',
-        `Copy this command for **${formatTaskPublicLabel(task.taskNumber)}**: \`/task add-attachment task_code:${task.taskNumber}\``,
-        'Then pick a file in Discord or switch to the URL field before sending.',
+        `Copy this slash for **${formatTaskPublicLabel(task.taskNumber)}**: \`/task add-attachment task_code:${formatTaskDisplayLabel(task)} file:\``,
+        'Then upload the file into the file field before sending.',
         'Choose an existing attachment below to edit or delete it.',
       ].join('\n'))
       .addFields({
@@ -396,22 +397,27 @@ function buildTaskAttachmentsPanelEmbed(options: Omit<TaskPanelPayloadOptions, '
 function buildAttachmentActionRows(task: TaskWithMembers): Array<ActionRowBuilder<ButtonBuilder>> {
   const rows: Array<ActionRowBuilder<ButtonBuilder>> = [];
 
-  for (const attachment of task.attachments.slice(0, 4)) {
+  for (const attachment of task.attachments.slice(0, 3)) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
     const displayName = truncateLabel(formatAttachmentLabel(attachment), 26);
-    rows.push(
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
+
+    if (!attachment.fileName) {
+      row.addComponents(
         new ButtonBuilder()
           .setCustomId(`task:attachment-edit:${task.id}:${attachment.id}`)
-          .setLabel(`Fix ${displayName}`)
-          .setEmoji('⚙️')
+          .setLabel(`Edit ${displayName}`)
           .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`task:attachment-delete:${task.id}:${attachment.id}`)
-          .setLabel(`X ${displayName}`)
-          .setEmoji('✖️')
-          .setStyle(ButtonStyle.Danger),
-      ),
+      );
+    }
+
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`task:attachment-delete:${task.id}:${attachment.id}`)
+        .setLabel(`Delete ${displayName}`)
+        .setStyle(ButtonStyle.Danger),
     );
+
+    rows.push(row);
   }
 
   return rows;
@@ -527,19 +533,7 @@ export function buildEditAttachmentModal(task: TaskWithMembers, attachmentId: nu
   }
 
   if (attachment.fileName) {
-    return new ModalBuilder()
-      .setCustomId(`task:attachment-edit-modal:${task.id}:${attachment.id}`)
-      .setTitle(`Edit file • ${formatTaskPublicLabel(task.taskNumber)}`)
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder()
-            .setCustomId('label')
-            .setLabel('File note')
-            .setStyle(TextInputStyle.Short)
-            .setValue(attachment.label ?? '')
-            .setRequired(false),
-        ),
-      );
+    return null;
   }
 
   return new ModalBuilder()

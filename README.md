@@ -347,9 +347,9 @@ Panel này sẽ:
   - `Upload File`
   - `Add URL`
 - Khi bấm `Upload File` hoặc `Add URL`, bot sẽ hiện **lệnh slash có sẵn để copy nhanh** cho đúng task hiện tại
-- Có nút theo từng attachment để:
-  - `⚙️ Fix ...`
-  - `✖️ X ...`
+- Có action theo từng attachment:
+  - file upload: `Delete ...`
+  - link attachment: `Edit ...`, `Delete ...`
 - Có:
   - `Back`
   - `Exit`
@@ -358,7 +358,8 @@ Panel này sẽ:
 Khi cần upload file trực tiếp kiểu cũ:
 - Dùng `/task add-attachment`
 - Chọn task từ list suggestion hoặc tự nhập số task như `42` / `Task #0042`
-- Nếu bấm nút `Upload File`, bot sẽ đưa ra một lệnh slash sẵn để copy nhanh
+- Nếu bấm nút `Upload File`, bot sẽ đưa ra một lệnh slash sẵn để copy nhanh theo kiểu:
+  - `/task add-attachment task_code:Task #0042 • Ten task file:`
 - Upload file trực tiếp vào attachment field của command
 - Có thể thêm note/label nếu muốn
 
@@ -369,11 +370,14 @@ Khi cần upload file trực tiếp kiểu cũ:
 - Có thể thêm `label`
 
 ### Chỉnh attachment hiện có
-- Trong panel `Attachments`, mỗi attachment có nút:
-  - `⚙️` để sửa
-  - `✖️` để xóa
-- Với file attachment: `⚙️` cho phép sửa note/label
-- Với link attachment: `⚙️` cho phép sửa URL và label
+- Trong panel `Attachments`, mỗi attachment sẽ có action theo đúng loại của nó
+- Với file attachment:
+  - chỉ có `Delete`
+  - nếu muốn thay file, upload file mới rồi xóa file cũ
+- Với link attachment:
+  - có `Edit`
+  - có `Delete`
+  - `Edit` cho phép sửa URL và label
 
 ### Nguyên tắc tên file
 - File attachment hiển thị ưu tiên theo `fileName`

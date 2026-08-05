@@ -123,7 +123,7 @@ export function parseTaskReferenceInput(value: string): ParsedTaskReference {
     };
   }
 
-  const taskNumberMatch = /^(?:task\s*#\s*|#\s*)?0*(\d+)$/i.exec(normalized);
+  const taskNumberMatch = /^(?:task\s*#\s*|#\s*)?0*(\d+)(?:\s*[•-].*)?$/i.exec(normalized);
   if (!taskNumberMatch) {
     return { taskNumber: null, legacyTaskCode: null };
   }
@@ -181,5 +181,5 @@ export function formatAttachmentLabel(options: {
   const fileName = options.fileName?.trim();
   const label = options.label?.trim();
 
-  return fileName || label || options.url || `Attachment #${options.id}`;
+  return fileName || label || options.url || 'Attachment';
 }
