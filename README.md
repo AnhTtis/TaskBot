@@ -668,15 +668,47 @@ NODE_ENV=production
    ```
 
 ### PM2
-Các lệnh này cũng phải chạy trong folder repo hoặc sau khi process `taskbot` đã được tạo đúng từ repo đó:
+Các lệnh này cũng phải chạy trong folder repo hoặc sau khi process `taskbot` đã được tạo đúng từ repo đó.
 
+### Khởi động lần đầu bằng PM2
 ```bash
 cd ~/TaskBot
+pm2 delete taskbot || true
+npm ci
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm run register:commands
+npm run build
 pm2 start npm --name taskbot -- run start
+pm2 save
+pm2 status
+```
+
+### Cập nhật code rồi restart lại
+```bash
+cd ~/TaskBot
+npm run prisma:migrate:deploy
+npm run register:commands
+npm run build
+pm2 restart taskbot || pm2 start npm --name taskbot -- run start
+pm2 save
+pm2 status
+```
+
+### Xem log / trạng thái
+```bash
 pm2 logs taskbot
-pm2 restart taskbot
+pm2 show taskbot
+pm2 status
+```
+
+### Tự khởi động lại sau khi reboot server
+```bash
+pm2 startup
 pm2 save
 ```
+
+> Sau khi chạy `pm2 startup`, PM2 sẽ in ra thêm một lệnh hệ thống. Hãy copy chạy đúng lệnh đó rồi mới `pm2 save` lại.
 
 ---
 
@@ -752,6 +784,10 @@ Kiểm tra:
 
 ## 12. License
 
-`package.json` hiện để `UNLICENSED`.
+Repo hiện dùng **MIT License**.
 
-Hãy coi repo này là private/internal cho tới khi bạn chủ động đổi license và chính sách phát hành.
+Các file liên quan:
+- `package.json` = `MIT`
+- file `LICENSE` ở root repo
+
+Điều này cho phép người khác dùng, sửa, phân phối lại source khá thoáng, miễn là giữ lại copyright notice và phần license đi kèm.
