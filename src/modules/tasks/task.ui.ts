@@ -359,6 +359,11 @@ function buildTaskEditPanelComponents(options: Omit<TaskPanelPayloadOptions, 'mo
         .setEmoji('↩️')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`task:delete-task:${task.id}`)
+        .setLabel('Delete Task')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
         .setCustomId(`task:exit:${task.id}`)
         .setLabel(closeLabel ?? 'Exit')
         .setEmoji(closeLabel ? '✅' : '✖️')
@@ -521,6 +526,30 @@ export function buildDeadlineModal(task: TaskWithMembers): ModalBuilder {
           .setPlaceholder('Leave blank to clear')
           .setValue(formatDeadlineForInput(task.deadlineAt ?? null))
           .setStyle(TextInputStyle.Short)
+          .setRequired(false),
+      ),
+    );
+}
+
+export function buildDeleteTaskModal(task: TaskWithMembers): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`task:delete-modal:${task.id}`)
+    .setTitle(`Delete ${formatTaskPublicLabel(task.taskNumber)}`)
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('task_reference')
+          .setLabel('Confirm task')
+          .setPlaceholder(formatTaskDisplayLabel(task))
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('reason')
+          .setLabel('Delete reason')
+          .setPlaceholder('Optional note for the feed log')
+          .setStyle(TextInputStyle.Paragraph)
           .setRequired(false),
       ),
     );

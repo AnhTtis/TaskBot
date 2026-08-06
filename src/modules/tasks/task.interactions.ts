@@ -52,6 +52,7 @@ import {
   createTask,
   createTaskEvent,
   createTaskStatusHistory,
+  deleteTask,
   findTaskByIdWithMembers,
   listTasksByStatus,
   listTasksForGuildWithMembers,
@@ -64,10 +65,12 @@ import {
   findTaskDeadlinePreset,
   formatAttachmentLabel,
   formatRoleMentions,
+  formatTaskDisplayLabel,
   formatTaskPublicLabel,
   isGuildTextChannel,
   normalizeOptionalText,
   parsePositiveIntegerInput,
+  parseTaskReferenceInput,
   parsePriorityInput,
   parseRequiredRoleInput,
 } from './task.helpers.js';
@@ -76,6 +79,7 @@ import { syncTaskDashboard } from './task.sync.js';
 import {
   buildCreateTaskModal,
   buildDeadlineModal,
+  buildDeleteTaskModal,
   buildEditAttachmentModal,
   buildEditTaskModal,
   buildTaskPanelPayload,
@@ -243,6 +247,29 @@ async function finalizeTaskInteraction(options: {
   });
 }
 
+async function deleteTaskCardMessage(options: {
+  readonly guild: NonNullable<TaskInteraction['guild']>;
+  readonly task: ResolvedTask;
+}): Promise<boolean> {
+  if (!options.task.taskMessageId || !options.task.taskMessageChannelId) {
+    return false;
+  }
+
+  const channel = options.guild.channels.cache.get(options.task.taskMessageChannelId)
+    ?? await options.guild.channels.fetch(options.task.taskMessageChannelId).catch(() => null);
+  if (!isGuildTextChannel(channel)) {
+    return false;
+  }
+
+  const message = await channel.messages.fetch(options.task.taskMessageId).catch(() => null);
+  if (!message) {
+    return false;
+  }
+
+  await message.delete().catch(() => null);
+  return true;
+}
+
 async function showTaskPanelReply(options: {
   readonly interaction: RepliableInteraction;
   readonly taskId: number;
@@ -337,6 +364,9 @@ export async function handleTaskButtonInteraction(
       return;
     case 'attachments':
       await handleTaskAttachmentsPanelInteraction(interaction, taskId);
+      return;
+    case 'delete-task':
+      await handleDeleteTaskPrompt(interaction, taskId);
       return;
     case 'attachment-upload-help':
       await handleAttachmentUploadHelpInteraction(interaction, taskId);
@@ -465,6 +495,12 @@ export async function handleTaskModalSubmitInteraction(
         break;
       }
       await handleSetDeadlineModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
+      return;
+    case 'delete-modal':
+      if (!taskIdPart) {
+        break;
+      }
+      await handleDeleteTaskModalSubmit(interaction, Number.parseInt(taskIdPart, 10));
       return;
     case 'attachment-edit-modal':
       if (!taskIdPart || !attachmentIdPart) {
@@ -1828,6 +1864,20 @@ async function handleSetDeadlinePrompt(interaction: ButtonInteraction, taskId: n
   await interaction.showModal(buildDeadlineModal(context.task));
 }
 
+async function handleDeleteTaskPrompt(interaction: ButtonInteraction, taskId: number): Promise<void> {
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  if (!hasManagementAccessForInteraction(interaction, context.guildConfig)) {
+    await interaction.reply({ content: 'Only configured manager roles can delete tasks.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.showModal(buildDeleteTaskModal(context.task));
+}
+
 async function handleEditAttachmentPrompt(
   interaction: ButtonInteraction,
   taskId: number,
@@ -2144,6 +2194,73 @@ async function handleSetDeadlineModalSubmit(interaction: ModalSubmitInteraction,
     taskId: updatedTask.id,
     mode: 'edit',
     notice: `Updated the deadline for **${formatTaskPublicLabel(updatedTask.taskNumber)}**.`,
+  });
+}
+
+async function handleDeleteTaskModalSubmit(
+  interaction: ModalSubmitInteraction,
+  taskId: number,
+): Promise<void> {
+  await deferEphemeral(interaction);
+  const context = await resolveTaskContext(interaction, taskId);
+  if (!context) {
+    return;
+  }
+
+  const { guild, guildConfig, task, dashboardChannel } = context;
+  if (!hasManagementAccessForInteraction(interaction, guildConfig)) {
+    await interaction.editReply({ content: 'Only configured manager roles can delete tasks.' });
+    return;
+  }
+
+  const confirmationInput = interaction.fields.getTextInputValue('task_reference');
+  const parsedReference = parseTaskReferenceInput(confirmationInput);
+  if (parsedReference.taskNumber !== task.taskNumber) {
+    await interaction.editReply({
+      content: `Confirmation mismatch. Type ${formatTaskDisplayLabel(task)} or the matching task number to delete this task.`,
+    });
+    return;
+  }
+
+  const reason = normalizeOptionalText(interaction.fields.getTextInputValue('reason'));
+  const cardDeleted = await deleteTaskCardMessage({ guild, task });
+  const threadArchived = task.threadChannelId
+    ? Boolean(await archiveTaskThread(guild, task.threadChannelId, 'Task deleted by manager.'))
+    : false;
+  const deleted = await deleteTask(task.id);
+
+  if (!deleted) {
+    await interaction.editReply({ content: `Task ${formatTaskPublicLabel(task.taskNumber)} was already removed.` });
+    return;
+  }
+
+  await refreshDashboardSummary({
+    guildId: guild.id,
+    guildName: guild.name,
+    refreshedByUserId: interaction.user.id,
+    dashboardChannel,
+    guildConfig,
+  });
+
+  await sendTaskFeedMessage({
+    guild,
+    content: [
+      `🗑️ Task deleted by <@${interaction.user.id}>.`,
+      `Task: **${formatTaskDisplayLabel(task)}**`,
+      `Card deleted: ${cardDeleted ? 'Yes' : 'No or already missing'}`,
+      `Thread archived: ${threadArchived ? 'Yes' : 'No thread / unavailable'}`,
+      reason ? `Reason: ${reason}` : null,
+    ].filter(Boolean).join('\n'),
+  });
+
+  await editTrackedPrivateReply(interaction, {
+    content: [
+      `Deleted **${formatTaskDisplayLabel(task)}**.`,
+      `Card deleted: ${cardDeleted ? 'Yes' : 'No or already missing'}`,
+      `Thread archived: ${threadArchived ? 'Yes' : 'No thread / unavailable'}`,
+    ].join('\n'),
+    embeds: [],
+    components: [],
   });
 }
 

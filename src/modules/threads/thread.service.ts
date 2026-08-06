@@ -116,6 +116,7 @@ export async function reopenTaskThread(
 export async function archiveTaskThread(
   guild: Guild,
   threadChannelId: string,
+  reason = 'Task completed.',
 ): Promise<PublicThreadChannel<boolean> | null> {
   const thread = await fetchPublicThread(guild, threadChannelId);
   if (!thread) {
@@ -123,7 +124,7 @@ export async function archiveTaskThread(
   }
 
   if (!thread.archived) {
-    await thread.setArchived(true, 'Task completed.');
+    await thread.setArchived(true, reason);
   }
 
   return thread;

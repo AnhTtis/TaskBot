@@ -153,6 +153,25 @@ export async function listTasksForDeadlineReminders(options: {
   });
 }
 
+export async function deleteTask(taskId: number): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const task = await tx.task.findUnique({
+      where: { id: taskId },
+      select: { id: true },
+    });
+
+    if (!task) {
+      return false;
+    }
+
+    await tx.task.delete({
+      where: { id: taskId },
+    });
+
+    return true;
+  });
+}
+
 export async function updateTaskWithMembers(
   taskId: number,
   data: Prisma.TaskUncheckedUpdateInput,

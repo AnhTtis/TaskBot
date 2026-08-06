@@ -295,6 +295,7 @@ Khi bấm nút public trên task card, bot sẽ mở panel private phù hợp v�
   - `Edit Details`
   - `Attachments`
   - `Overview`
+  - `Delete Task`
   - `Exit`
 
 ### `IN_PROGRESS`
@@ -513,8 +514,8 @@ Manager thường làm các việc:
    - Bấm `Edit Details` nếu cần sửa title/description/team size
    - Bấm `Attachments` để mở panel attachment
    - Từ đó dùng `/task add-attachment` nếu cần upload file hoặc thêm URL
-   - Dùng `⚙️` để sửa attachment hiện có
-   - Dùng `✖️` để xóa attachment hiện có
+   - Dùng action `Edit` / `Delete` theo đúng loại attachment hiện có
+   - Bấm `Delete Task` nếu manager muốn xóa hẳn task khỏi bot
    - Bấm `Done` khi đã tinh chỉnh xong màn hình hậu tạo task đầu tiên
 5. Mở task card -> bấm `Open Task` / `Progress` / `Review` / `Results`
 6. Nếu Discord state lệch, bấm `Reload Dashboard`
